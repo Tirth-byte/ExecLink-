@@ -1,0 +1,1550 @@
+"use client";
+
+import { useAuth } from "@/lib/auth";
+import { useState, useRef, useEffect } from "react";
+import Link from "next/link";
+import {
+  ArrowRight,
+  CheckCircle2,
+  ChevronLeft,
+  ChevronRight,
+  SlidersHorizontal,
+  X,
+  FileText,
+  Camera,
+  Video,
+  AlertTriangle,
+  Info,
+  ShieldAlert,
+  ShieldCheck,
+  Sparkles,
+  ArrowUpRight,
+  RotateCcw,
+  Link2,
+} from "lucide-react";
+import {
+  DisciplineBadge,
+  StatusBadge,
+  Button,
+} from "@/components/ui";
+import {
+  MatchCandidate,
+  MatchReviewItem,
+  matchReviewQueue,
+} from "@/data/match-review";
+
+export interface MatchReviewWorkspaceProps {
+  initialItems?: MatchReviewItem[];
+  isLoading?: boolean;
+  apiError?: string | null;
+  onRetry?: () => void;
+}
+
+export function MatchReviewWorkspace({
+  initialItems = matchReviewQueue,
+  isLoading = false,
+  apiError = null,
+  onRetry,
+}: MatchReviewWorkspaceProps = {}) {
+  const { hasPermission } = useAuth();
+  const canVerify = hasPermission("match.verify");
+  const [items, setItems] = useState<MatchReviewItem[]>(initialItems);
+  const [filterCategory, setFilterCategory] = useState<
+    "All" | "High Priority" | "Low Confidence" | "Ambiguous" | "Unmatched"
+  >("All");
+  const [currentIndex, setCurrentIndex] = useState(0);
+  const [selectedCandidateOverrides, setSelectedCandidateOverrides] = useState<
+    Record<string, MatchCandidate>
+  >({});
+
+  // Modals
+  const [approveModalOpen, setApproveModalOpen] = useState(false);
+  const [rejectModalOpen, setRejectModalOpen] = useState(false);
+  const [newActivityModalOpen, setNewActivityModalOpen] = useState(false);
+  const [evidenceModalOpen, setEvidenceModalOpen] = useState(false);
+  const [filterPopoverOpen, setFilterPopoverOpen] = useState(false);
+
+  // Evidence refs & image fallback state
+  const previewBtnRef = useRef<HTMLButtonElement | null>(null);
+  const evidenceTriggerRef = useRef<HTMLElement | null>(null);
+  const modalCloseBtnRef = useRef<HTMLButtonElement | null>(null);
+  const fieldEventScrollRef = useRef<HTMLDivElement | null>(null);
+  const [imageLoadError, setImageLoadError] = useState(false);
+
+  // Form states
+  const [rejectReason, setRejectReason] = useState("Wrong activity");
+  const [plannerNote, setPlannerNote] = useState("");
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
+
+  // Sync initialItems when prop changes
+  useEffect(() => {
+    setItems(initialItems);
+  }, [initialItems]);
+
+  // Filter items
+  const filteredItems = items.filter((item) => {
+    if (filterCategory === "All") return true;
+    if (filterCategory === "High Priority") return item.priority === "High";
+    if (filterCategory === "Low Confidence") return item.recommendedCandidate.confidence < 70;
+    if (filterCategory === "Ambiguous") return item.category === "Ambiguous";
+    if (filterCategory === "Unmatched") return item.category === "Unmatched";
+    return true;
+  });
+
+  // Clamp index
+  const safeIndex = Math.min(Math.max(0, currentIndex), Math.max(0, filteredItems.length - 1));
+  const currentItem = filteredItems[safeIndex];
+
+  // Reset scroll position and image load error when item changes
+  useEffect(() => {
+    setImageLoadError(false);
+    if (fieldEventScrollRef.current) {
+      fieldEventScrollRef.current.scrollTop = 0;
+    }
+  }, [currentItem?.id]);
+
+  // Focus modal close button on open
+  useEffect(() => {
+    if (evidenceModalOpen) {
+      modalCloseBtnRef.current?.focus();
+    }
+  }, [evidenceModalOpen]);
+
+  // Active candidate (default or selected alternative)
+  const isAlternativeSelected = Boolean(
+    currentItem &&
+      selectedCandidateOverrides[currentItem.id] &&
+      selectedCandidateOverrides[currentItem.id].id !== currentItem.recommendedCandidate.id
+  );
+
+  const currentCandidate = currentItem
+    ? selectedCandidateOverrides[currentItem.id] || currentItem.recommendedCandidate
+    : null;
+
+  // Remaining in queue
+  const queueCount = items.filter((i) => i.status === "Needs Review").length;
+
+  const showToast = (msg: string) => {
+    setToastMessage(msg);
+    setTimeout(() => {
+      setToastMessage((prev) => (prev === msg ? null : prev));
+    }, 4000);
+  };
+
+  const handleNext = () => {
+    if (safeIndex < filteredItems.length - 1) {
+      setCurrentIndex(safeIndex + 1);
+    }
+  };
+
+  const handlePrev = () => {
+    if (safeIndex > 0) {
+      setCurrentIndex(safeIndex - 1);
+    }
+  };
+
+  const handleSelectAlternative = (candidate: MatchCandidate) => {
+    if (!currentItem) return;
+    setSelectedCandidateOverrides((prev) => ({
+      ...prev,
+      [currentItem.id]: candidate,
+    }));
+    showToast(`Selected alternative ${candidate.id} (${candidate.name})`);
+  };
+
+  const handleResetToRecommended = () => {
+    if (!currentItem) return;
+    setSelectedCandidateOverrides((prev) => {
+      const next = { ...prev };
+      delete next[currentItem.id];
+      return next;
+    });
+    showToast(`Reset to AI recommended match: ${currentItem.recommendedCandidate.id}`);
+  };
+
+  const handleReopenReview = () => {
+    if (!currentItem) return;
+    setItems((prev) =>
+      prev.map((it) =>
+        it.id === currentItem.id
+          ? {
+              ...it,
+              status: "Needs Review",
+              verifiedAt: undefined,
+              verifiedBy: undefined,
+              rejectionReason: undefined,
+              plannerNote: undefined,
+            }
+          : it
+      )
+    );
+    showToast(`Review reopened for ${currentItem.eventId}. Status reset to Needs Review.`);
+  };
+
+  const handleApprove = () => {
+    if (!currentItem || !currentCandidate) return;
+
+    if (currentCandidate.isProgressCompatible) {
+      // Normal schedule progress update
+      setItems((prev) =>
+        prev.map((it) =>
+          it.id === currentItem.id
+            ? {
+                ...it,
+                status: "Verified",
+                verifiedAt: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+                verifiedBy: "T. Patel (Lead Planner)",
+              }
+            : it
+        )
+      );
+      setApproveModalOpen(false);
+      showToast(
+        `Match verified: ${currentCandidate.id} updated to ${currentCandidate.proposedProgress}% verified progress (+${currentCandidate.deltaProgress} pts).`
+      );
+    } else {
+      // Link only - no progress mutation
+      setItems((prev) =>
+        prev.map((it) =>
+          it.id === currentItem.id
+            ? {
+                ...it,
+                status: "Verified",
+                verifiedAt: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+                verifiedBy: "T. Patel (Lead Planner)",
+              }
+            : it
+        )
+      );
+      setApproveModalOpen(false);
+      showToast(
+        `Audit link confirmed: ${currentItem.eventId} linked to ${currentCandidate.id}. Schedule progress preserved at ${currentCandidate.currentProgress}%.`
+      );
+    }
+
+    if (safeIndex < filteredItems.length - 1) {
+      setCurrentIndex(safeIndex + 1);
+    }
+  };
+
+  const handleReject = () => {
+    if (!currentItem) return;
+    setItems((prev) =>
+      prev.map((it) =>
+        it.id === currentItem.id
+          ? {
+              ...it,
+              status: "Rejected",
+              rejectionReason: rejectReason,
+              plannerNote,
+            }
+          : it
+      )
+    );
+    setRejectModalOpen(false);
+    setPlannerNote("");
+    showToast(`Match proposal rejected: ${rejectReason}. No schedule actuals modified.`);
+    if (safeIndex < filteredItems.length - 1) {
+      setCurrentIndex(safeIndex + 1);
+    }
+  };
+
+  const handleMarkNewActivity = () => {
+    if (!currentItem) return;
+    setItems((prev) =>
+      prev.map((it) =>
+        it.id === currentItem.id
+          ? {
+              ...it,
+              status: "Flagged New Activity",
+            }
+          : it
+      )
+    );
+    setNewActivityModalOpen(false);
+    showToast(`Event flagged as unrepresented scope. Routed to baseline change backlog.`);
+    if (safeIndex < filteredItems.length - 1) {
+      setCurrentIndex(safeIndex + 1);
+    }
+  };
+
+  // Keyboard navigation & modal Escape dismiss
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        if (evidenceModalOpen) {
+          setEvidenceModalOpen(false);
+          evidenceTriggerRef.current?.focus();
+          return;
+        }
+        setApproveModalOpen(false);
+        setRejectModalOpen(false);
+        setNewActivityModalOpen(false);
+        setFilterPopoverOpen(false);
+        return;
+      }
+      if (
+        e.target instanceof HTMLInputElement ||
+        e.target instanceof HTMLTextAreaElement ||
+        e.target instanceof HTMLSelectElement
+      )
+        return;
+      if (e.key === "ArrowRight") handleNext();
+      if (e.key === "ArrowLeft") handlePrev();
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [
+    safeIndex,
+    filteredItems.length,
+    evidenceModalOpen,
+    approveModalOpen,
+    rejectModalOpen,
+    newActivityModalOpen,
+  ]);
+
+  return (
+    <div className="match-review-page-wrap">
+      {/* Toast Notification */}
+      {toastMessage && (
+        <div className="match-toast" role="status" aria-live="polite">
+          <div className="match-toast-icon">
+            <CheckCircle2 size={16} />
+          </div>
+          <span className="match-toast-text">{toastMessage}</span>
+          <button
+            className="match-toast-close"
+            onClick={() => setToastMessage(null)}
+            aria-label="Dismiss toast"
+          >
+            <X size={14} />
+          </button>
+        </div>
+      )}
+
+      {/* Page Header (Compact 72-80px) */}
+      <header className="page-header match-review-header">
+        <div className="match-header-text">
+          <p className="eyebrow">EXECUTION</p>
+          <h1 className="page-title">Match Review</h1>
+          <p className="page-description">
+            Reconcile field execution events with project baseline schedule activities before
+            verified actuals are committed.
+          </p>
+        </div>
+        <div className="match-header-actions">
+          <div className="review-queue-pill">
+            <span className="queue-pill-dot" />
+            <span className="queue-pill-text">Review Queue: {queueCount}</span>
+          </div>
+          <button
+            className={`button secondary filter-btn ${filterCategory !== "All" ? "has-filter" : ""}`}
+            onClick={() => setFilterPopoverOpen(!filterPopoverOpen)}
+            aria-expanded={filterPopoverOpen}
+          >
+            <SlidersHorizontal size={14} />
+            <span>Filters</span>
+            {filterCategory !== "All" && <span className="filter-active-dot" />}
+          </button>
+        </div>
+      </header>
+
+      {/* Review Queue Navigation Row (Compact 44px) */}
+      <div className="review-queue-toolbar">
+        <div className="queue-nav-controls">
+          <button
+            className="button secondary queue-nav-btn"
+            onClick={handlePrev}
+            disabled={safeIndex === 0}
+            aria-label="Previous review item"
+          >
+            <ChevronLeft size={14} />
+            <span>Previous</span>
+          </button>
+          <div className="queue-position-indicator">
+            Review item <span className="pos-num">{filteredItems.length > 0 ? safeIndex + 1 : 0}</span> of{" "}
+            <span className="pos-total">{filteredItems.length}</span>
+          </div>
+          <button
+            className="button secondary queue-nav-btn"
+            onClick={handleNext}
+            disabled={safeIndex >= filteredItems.length - 1}
+            aria-label="Next review item"
+          >
+            <span>Next</span>
+            <ChevronRight size={14} />
+          </button>
+        </div>
+
+        <div className="queue-filter-chips">
+          {(
+            [
+              { id: "All", label: "All", count: items.filter((i) => i.status === "Needs Review").length },
+              { id: "High Priority", label: "High Priority", count: items.filter((i) => i.priority === "High" && i.status === "Needs Review").length },
+              { id: "Low Confidence", label: "Low Confidence", count: items.filter((i) => i.recommendedCandidate.confidence < 70 && i.status === "Needs Review").length },
+              { id: "Ambiguous", label: "Ambiguous", count: items.filter((i) => i.category === "Ambiguous" && i.status === "Needs Review").length },
+              { id: "Unmatched", label: "Unmatched", count: items.filter((i) => i.category === "Unmatched" && i.status === "Needs Review").length },
+            ] as const
+          ).map((chip) => (
+            <button
+              key={chip.id}
+              className={`queue-chip ${filterCategory === chip.id ? "active" : ""}`}
+              onClick={() => {
+                setFilterCategory(chip.id);
+                setCurrentIndex(0);
+              }}
+            >
+              <span>{chip.label}</span>
+              <span className="chip-count">{chip.count}</span>
+            </button>
+          ))}
+          <div className="queue-sort-badge">
+            <span>Sort:</span>
+            <strong>Priority</strong>
+          </div>
+        </div>
+      </div>
+
+      {/* Loading Skeleton State */}
+      {isLoading ? (
+        <section className="surface state-card match-skeleton-state" aria-busy="true" aria-label="Loading review queue">
+          <div className="state-icon skeleton-pulse-icon">
+            <Sparkles size={22} className="text-accent" />
+          </div>
+          <h2 className="state-title">Loading Match Review Queue…</h2>
+          <p className="state-copy">Retrieving field updates and baseline activity candidates.</p>
+        </section>
+      ) : apiError ? (
+        <section className="surface state-card match-error-state" role="alert">
+          <div className="state-icon text-red">
+            <AlertTriangle size={24} />
+          </div>
+          <h2 className="state-title">Failed to load match review queue</h2>
+          <p className="state-copy">{apiError}</p>
+          {onRetry && (
+            <Button variant="secondary" onClick={onRetry} style={{ marginTop: 12 }}>
+              Retry Connection
+            </Button>
+          )}
+        </section>
+      ) : !currentItem ? (
+        <section className="surface state-card match-empty-state">
+          <div className="state-icon">
+            <CheckCircle2 size={24} />
+          </div>
+          <h2 className="state-title">Review queue clear</h2>
+          <p className="state-copy">
+            {filterCategory === "All"
+              ? "All proposed matches in the queue have been reviewed."
+              : `No items matching category “${filterCategory}”.`}
+          </p>
+          {filterCategory !== "All" && (
+            <Button
+              variant="secondary"
+              onClick={() => {
+                setFilterCategory("All");
+                setCurrentIndex(0);
+              }}
+              style={{ marginTop: 12 }}
+            >
+              Reset to All ({items.length})
+            </Button>
+          )}
+        </section>
+      ) : (
+        <>
+          {/* Main Three-Column Reconciliation Workspace (~27% / ~42% / ~31%) */}
+          <div className="match-review-grid">
+            {/* ========================================================================= */}
+            {/* COLUMN 1: FIELD EVENT (~27%)                                             */}
+            {/* ========================================================================= */}
+            <section className="surface match-panel panel-field-event">
+              <div className="match-panel-head">
+                <span className="match-panel-title">FIELD EVENT</span>
+                <div className="panel-status-row">
+                  <StatusBadge>{currentItem.status === "Needs Review" ? "Review" : currentItem.status}</StatusBadge>
+                  <DisciplineBadge>{currentItem.discipline}</DisciplineBadge>
+                  <span className="event-meta-time">{currentItem.time}</span>
+                </div>
+              </div>
+
+              <div ref={fieldEventScrollRef} className="match-panel-content field-event-scroll">
+                {/* BLOCK 1: Event Information */}
+                <div className="field-event-primary">
+                  {/* Event Title */}
+                  <h2 className="field-event-title">{currentItem.eventTitle}</h2>
+
+                  {/* Raw Field Update Block */}
+                  <div className="raw-field-box">
+                    <div className="raw-field-provenance">
+                      <span className="provenance-tag">Source: Field Update</span>
+                    </div>
+                    <p className="raw-field-text">{currentItem.rawFieldUpdate}</p>
+                  </div>
+
+                  {/* Extracted Details Rows */}
+                  <div className="extraction-section">
+                    <div className="extraction-header-row">
+                      <span className="extraction-header">EXTRACTED DETAILS</span>
+                    </div>
+                    <div className="extraction-grid">
+                      <div className="extraction-row">
+                        <span className="ext-key">EVENT TYPE</span>
+                        <span className="ext-val">{currentItem.structuredExtraction.eventType}</span>
+                      </div>
+                      <div className="extraction-row">
+                        <span className="ext-key">DISCIPLINE</span>
+                        <span className="ext-val font-semibold">{currentItem.structuredExtraction.discipline}</span>
+                      </div>
+                      <div className="extraction-row">
+                        <span className="ext-key">ASSET / TAG</span>
+                        <span className="ext-val font-mono font-highlight-asset">
+                          {currentItem.structuredExtraction.assetTag}
+                        </span>
+                      </div>
+                      <div className="extraction-row">
+                        <span className="ext-key">LOCATION</span>
+                        <span className="ext-val">{currentItem.structuredExtraction.location}</span>
+                      </div>
+                      <div className="extraction-row">
+                        <span className="ext-key">REPORTED PROGRESS</span>
+                        <span className="ext-val font-mono font-highlight-progress">
+                          {currentItem.structuredExtraction.reportedProgress}
+                        </span>
+                      </div>
+                      <div className="extraction-row">
+                        <span className="ext-key">SOURCE</span>
+                        <span className="ext-val">{currentItem.structuredExtraction.source}</span>
+                      </div>
+                      <div className="extraction-row">
+                        <span className="ext-key">REPORTED BY</span>
+                        <span className="ext-val">{currentItem.structuredExtraction.reportedBy}</span>
+                      </div>
+                      <div className="extraction-row">
+                        <span className="ext-key">ROLE</span>
+                        <span className="ext-val">{currentItem.structuredExtraction.role}</span>
+                      </div>
+                      <div className="extraction-row">
+                        <span className="ext-key">RECEIVED</span>
+                        <span className="ext-val font-mono">{currentItem.structuredExtraction.received}</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Compact Supporting Evidence Card */}
+                  {(() => {
+                    const evType = currentItem.evidence.type;
+                    const refLower = (currentItem.evidence.reference || "").toLowerCase();
+                    const isVideo = evType === "video" || refLower.endsWith(".mp4") || refLower.endsWith(".mov") || refLower.endsWith(".webm");
+                    const isDocument = evType === "document" || evType === "sheet" || evType === "transcript" || refLower.endsWith(".pdf") || refLower.endsWith(".doc") || refLower.endsWith(".docx") || refLower.endsWith(".xlsx");
+                    const isPhoto = !isVideo && !isDocument;
+
+                    const mediaLabel = isVideo ? "Field video" : isDocument ? "Field document" : "Field photo";
+                    const reporterName = currentItem.structuredExtraction.reportedBy || currentItem.evidence.reporter?.split(" · ")[0] || "Field Reporter";
+
+                    return (
+                      <div
+                        className="compact-evidence-teaser"
+                        onClick={() => {
+                          evidenceTriggerRef.current = previewBtnRef.current;
+                          setEvidenceModalOpen(true);
+                        }}
+                        role="button"
+                        tabIndex={0}
+                        aria-label={`View supporting field evidence attachment: ${mediaLabel} by ${reporterName}`}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" || e.key === " ") {
+                            evidenceTriggerRef.current = previewBtnRef.current;
+                            setEvidenceModalOpen(true);
+                          }
+                        }}
+                      >
+                        <div className="compact-evidence-header">
+                          <span className="compact-evidence-title">SUPPORTING EVIDENCE</span>
+                          <span className="compact-evidence-count">{currentItem.evidence.count}</span>
+                        </div>
+                        <div className="compact-evidence-content">
+                          <div className="compact-evidence-thumb">
+                            {isPhoto && currentItem.evidence.imageUrl && !imageLoadError ? (
+                              <img
+                                src={currentItem.evidence.imageUrl}
+                                alt="Field photo thumbnail"
+                                className="compact-thumb-img"
+                                onError={() => setImageLoadError(true)}
+                              />
+                            ) : isVideo && currentItem.evidence.imageUrl && !imageLoadError ? (
+                              <img
+                                src={currentItem.evidence.imageUrl}
+                                alt="Field video thumbnail"
+                                className="compact-thumb-img"
+                                onError={() => setImageLoadError(true)}
+                              />
+                            ) : (
+                              <div className="compact-thumb-fallback">
+                                {isPhoto ? (
+                                  <Camera size={20} />
+                                ) : isVideo ? (
+                                  <Video size={20} />
+                                ) : (
+                                  <FileText size={20} />
+                                )}
+                              </div>
+                            )}
+
+                            {currentItem.evidence.isSyntheticDemo && (
+                              <span className="compact-synthetic-badge">DEMO</span>
+                            )}
+
+                            {/* Video duration overlay: ONLY shown for video with media duration metadata */}
+                            {isVideo && currentItem.evidence.duration && (
+                              <span className="compact-video-duration">
+                                {currentItem.evidence.duration}
+                              </span>
+                            )}
+                          </div>
+
+                          <div className="compact-evidence-info">
+                            <span className="compact-photo-label">{mediaLabel}</span>
+                            <span className="compact-meta-reporter">{reporterName}</span>
+                            <button
+                              ref={previewBtnRef}
+                              type="button"
+                              className="compact-action-link"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                evidenceTriggerRef.current = previewBtnRef.current;
+                                setEvidenceModalOpen(true);
+                              }}
+                            >
+                              View evidence →
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })()}
+                </div>
+              </div>
+            </section>
+
+            {/* ========================================================================= */}
+            {/* COLUMN 2: RECOMMENDED / SELECTED CANDIDATE (~42%)                        */}
+            {/* ========================================================================= */}
+            <section className="surface match-panel panel-recommended-match">
+              <div className="match-panel-head">
+                <span className="match-panel-title">
+                  {isAlternativeSelected ? "SELECTED ALTERNATIVE" : "RECOMMENDED MATCH"}
+                </span>
+
+                {/* Confidence Meter Badge */}
+                {currentCandidate && (
+                  <div
+                    className={`confidence-indicator-card ${
+                      currentCandidate.confidence >= 90
+                        ? "tier-high"
+                        : currentCandidate.confidence >= 70
+                        ? "tier-review"
+                        : "tier-weak"
+                    }`}
+                  >
+                    <div className="confidence-num-wrap">
+                      <span className="conf-value font-mono">{currentCandidate.confidence}%</span>
+                      <span className="conf-tier-label">
+                        {currentCandidate.confidence >= 90
+                          ? "High Confidence"
+                          : currentCandidate.confidence >= 70
+                          ? "Review Required"
+                          : "Weak / Unmatched"}
+                      </span>
+                    </div>
+                    <div className="confidence-mini-track">
+                      <div
+                        className="confidence-mini-fill"
+                        style={{ width: `${currentCandidate.confidence}%` }}
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <div className="match-panel-content">
+                {/* Already-Reviewed Action Banner */}
+                {currentItem.status !== "Needs Review" && (
+                  <div className={`reviewed-status-banner banner-${currentItem.status.toLowerCase().replace(/\s+/g, "-")}`}>
+                    <div className="reviewed-banner-content">
+                      {currentItem.status === "Verified" ? (
+                        <CheckCircle2 size={15} className="banner-icon-verified" />
+                      ) : currentItem.status === "Rejected" ? (
+                        <X size={15} className="banner-icon-rejected" />
+                      ) : (
+                        <Info size={15} className="banner-icon-flagged" />
+                      )}
+                      <div className="banner-text-wrap">
+                        <span className="banner-title">
+                          {currentItem.status === "Verified"
+                            ? "Verified Decision Recorded"
+                            : currentItem.status === "Rejected"
+                            ? "Match Proposal Rejected"
+                            : "Flagged as Potential New Activity"}
+                        </span>
+                        <span className="banner-desc">
+                          {currentItem.status === "Verified"
+                            ? `Verified by ${currentItem.verifiedBy || "T. Patel (Lead Planner)"} at ${currentItem.verifiedAt || "09:45"}. Schedule actuals committed.`
+                            : currentItem.status === "Rejected"
+                            ? `Rejection reason: “${currentItem.rejectionReason || "Wrong activity"}”. Schedule actuals unchanged.`
+                            : "Event routed to baseline change backlog for scope investigation. Schedule unchanged."}
+                        </span>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      className="button secondary reopen-decision-btn"
+                      onClick={handleReopenReview}
+                    >
+                      <RotateCcw size={12} />
+                      <span>Reopen</span>
+                    </button>
+                  </div>
+                )}
+
+                {currentCandidate ? (
+                  <>
+                    {/* Candidate Identity Lead Section */}
+                    <div className="candidate-identity-lead">
+                      <div className="candidate-topline">
+                        <div className="candidate-id-wrap">
+                          <span className="activity-id-tag font-mono">{currentCandidate.id}</span>
+                          <DisciplineBadge>{currentCandidate.discipline}</DisciplineBadge>
+                        </div>
+                        <span className="provenance-tag">Schedule source: L6 baseline</span>
+                      </div>
+
+                      {/* Subtle Line if alternative is active */}
+                      {isAlternativeSelected && (
+                        <div className="ai-rec-context-line">
+                          <span className="context-label">AI recommendation:</span>
+                          <span className="context-val font-mono">
+                            {currentItem.recommendedCandidate.id} · {currentItem.recommendedCandidate.confidence}%
+                          </span>
+                        </div>
+                      )}
+
+                      <h2 className="activity-lead-name">{currentCandidate.name}</h2>
+                      <div className="wbs-path-wrap">
+                        <span className="wbs-prefix">WBS:</span>
+                        <span className="wbs-text">{currentCandidate.wbs}</span>
+                      </div>
+                    </div>
+
+                    {/* Schedule Information Clean 3-Column x 2-Row Grid */}
+                    <div className="schedule-info-grid">
+                      <div className="schedule-info-cell">
+                        <span className="cell-label">Baseline Start</span>
+                        <span className="cell-val">{currentCandidate.baselineStart}</span>
+                      </div>
+                      <div className="schedule-info-cell">
+                        <span className="cell-label">Baseline Finish</span>
+                        <span className="cell-val">{currentCandidate.baselineFinish}</span>
+                      </div>
+                      <div className="schedule-info-cell">
+                        <span className="cell-label">Total Float</span>
+                        <span className="cell-val font-mono">{currentCandidate.totalFloat}</span>
+                      </div>
+                      <div className="schedule-info-cell">
+                        <span className="cell-label">Current Progress</span>
+                        <span className="cell-val font-mono">{currentCandidate.currentProgress}%</span>
+                      </div>
+                      <div className="schedule-info-cell">
+                        <span className="cell-label">Proposed Progress</span>
+                        <span className="cell-val font-mono font-accent">
+                          {currentCandidate.isProgressCompatible
+                            ? `${currentCandidate.proposedProgress}%`
+                            : "—"}
+                        </span>
+                      </div>
+                      <div className="schedule-info-cell">
+                        <span className="cell-label">Schedule Status</span>
+                        <span className="cell-val">{currentCandidate.scheduleStatus}</span>
+                      </div>
+                    </div>
+
+                    {/* Schedule Impact Preview Box: Separated Progress vs Link Logic */}
+                    {currentCandidate.isProgressCompatible ? (
+                      <div className="impact-preview-module">
+                        <div className="impact-header">
+                          <span className="impact-title">SCHEDULE IMPACT PREVIEW</span>
+                          <span className="impact-delta-pill">
+                            +{currentCandidate.deltaProgress} pts verified progress
+                          </span>
+                        </div>
+
+                        <div className="impact-metrics-row">
+                          <div className="impact-metric-block">
+                            <span className="impact-metric-label">CURRENT</span>
+                            <span className="impact-metric-val">{currentCandidate.currentProgress}%</span>
+                            <div className="impact-track">
+                              <div
+                                className="impact-fill current-fill"
+                                style={{ width: `${currentCandidate.currentProgress}%` }}
+                              />
+                            </div>
+                          </div>
+
+                          <div className="impact-arrow-divider">
+                            <ArrowRight size={16} />
+                          </div>
+
+                          <div className="impact-metric-block">
+                            <span className="impact-metric-label">AFTER APPROVAL</span>
+                            <span className="impact-metric-val active-val">
+                              {currentCandidate.proposedProgress}%
+                            </span>
+                            <div className="impact-track">
+                              <div
+                                className="impact-fill proposed-fill"
+                                style={{ width: `${currentCandidate.proposedProgress}%` }}
+                              />
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    ) : (
+                      /* Incompatible candidate: DO NOT fabricate progress mutation! */
+                      <div className="impact-preview-module incompatible-impact-module">
+                        <div className="impact-header">
+                          <span className="impact-title">SCHEDULE IMPACT PREVIEW</span>
+                          <span className="impact-incompatible-pill">No progress update proposed</span>
+                        </div>
+
+                        <div className="impact-incompatible-banner">
+                          <AlertTriangle size={14} className="incompatible-icon" />
+                          <p className="impact-incompatible-text">
+                            {currentCandidate.incompatibilityReason ||
+                              "The reported progress refers to different work and cannot be safely applied to the selected activity."}
+                          </p>
+                        </div>
+
+                        <div className="impact-incompatible-grid">
+                          <div className="incompatible-stat-item">
+                            <span className="stat-label">Current verified progress</span>
+                            <span className="stat-value font-mono">{currentCandidate.currentProgress}%</span>
+                          </div>
+                          <div className="incompatible-stat-item">
+                            <span className="stat-label">Proposed progress</span>
+                            <span className="stat-value font-mono font-muted">—</span>
+                          </div>
+                          <div className="incompatible-stat-item">
+                            <span className="stat-label">Schedule mutation</span>
+                            <span className="stat-value mutation-none">None</span>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Critical Invariant Callout */}
+                    <div className="trust-boundary-notice">
+                      <div className="notice-icon">
+                        <ShieldAlert size={14} />
+                      </div>
+                      <p className="notice-text">
+                        Schedule actuals remain unchanged until planner approval.
+                      </p>
+                    </div>
+
+                    {/* Alternative Candidates Section */}
+                    <div className="alternatives-section">
+                      <div className="alternatives-header-row">
+                        <span className="alternatives-title">
+                          ALTERNATIVE CANDIDATES ({currentItem.alternativeCandidates.length})
+                        </span>
+                        {isAlternativeSelected && (
+                          <button
+                            type="button"
+                            className="reset-rec-link-btn"
+                            onClick={handleResetToRecommended}
+                          >
+                            <RotateCcw size={11} />
+                            <span>Reset to Recommended ({currentItem.recommendedCandidate.id})</span>
+                          </button>
+                        )}
+                      </div>
+
+                      <div className="alternatives-list">
+                        {currentItem.alternativeCandidates.map((alt) => {
+                          const isSelected = currentCandidate.id === alt.id;
+                          return (
+                            <div
+                              key={alt.id}
+                              className={`alt-candidate-row ${isSelected ? "selected-alt" : ""}`}
+                            >
+                              <div className="alt-left-info">
+                                <div className="alt-topline">
+                                  <span className="alt-id font-mono">{alt.id}</span>
+                                  <span
+                                    className={`alt-conf-pill ${
+                                      alt.confidence >= 70 ? "review" : "weak"
+                                    }`}
+                                  >
+                                    {alt.confidence}% · {alt.confidenceTier === "Review" ? "Review" : alt.confidenceTier}
+                                  </span>
+                                  {!alt.isProgressCompatible && (
+                                    <span className="alt-compatibility-tag" title="Progress cannot be safely credited">
+                                      Match only
+                                    </span>
+                                  )}
+                                </div>
+                                <span className="alt-name" title={alt.name}>
+                                  {alt.name}
+                                </span>
+                              </div>
+                              <Button
+                                variant={isSelected ? "primary" : "secondary"}
+                                className="alt-select-btn"
+                                onClick={() => handleSelectAlternative(alt)}
+                              >
+                                {isSelected ? "Selected" : "Select"}
+                              </Button>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </>
+                ) : (
+                  <div className="no-candidate-placeholder">
+                    <AlertTriangle size={24} />
+                    <p>No schedule activity candidate identified for this event.</p>
+                  </div>
+                )}
+              </div>
+            </section>
+
+            {/* ========================================================================= */}
+            {/* COLUMN 3: WHY THIS MATCH (~31%)                                          */}
+            {/* ========================================================================= */}
+            <section className="surface match-panel panel-match-explanation">
+              <div className="match-panel-head">
+                <span className="match-panel-title">WHY THIS MATCH</span>
+                <span className="provenance-tag">Multi-signal reconciliation</span>
+              </div>
+
+              <div className="match-panel-content">
+                {/* Six Matching Signals with Consistent Width & Semantic Helper */}
+                {currentCandidate && (
+                  <div className="signals-module">
+                    <span className="signals-header">SIX MATCHING SIGNALS</span>
+                    <div className="signal-list">
+                      {[
+                        { label: "Semantic Similarity", value: currentCandidate.signals.semantic },
+                        { label: "Asset / Tag Match", value: currentCandidate.signals.assetTag },
+                        { label: "WBS Context", value: currentCandidate.signals.wbsContext },
+                        { label: "Discipline Match", value: currentCandidate.signals.discipline },
+                        { label: "Temporal Fit", value: currentCandidate.signals.temporal },
+                        { label: "Location Match", value: currentCandidate.signals.location },
+                      ].map((sig) => {
+                        const tierHelper =
+                          sig.value >= 90 ? "Strong" : sig.value >= 70 ? "Partial" : "Weak";
+                        const fillColor =
+                          sig.value >= 90
+                            ? "var(--accent)"
+                            : sig.value >= 70
+                            ? "var(--amber)"
+                            : "var(--text-muted)";
+
+                        return (
+                          <div key={sig.label} className="signal-row">
+                            <span className="sig-label">{sig.label}</span>
+                            <div className="signal-track">
+                              <span
+                                className="signal-fill"
+                                style={{
+                                  width: `${sig.value}%`,
+                                  backgroundColor: fillColor,
+                                }}
+                              />
+                            </div>
+                            <div className="signal-value-cell">
+                              <span className="signal-number font-mono">{sig.value}%</span>
+                              <span className={`signal-tier-helper ${tierHelper.toLowerCase()}`}>
+                                {tierHelper}
+                              </span>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                {/* Match Reasoning Text */}
+                <div className="reasoning-box">
+                  <span className="reasoning-header">MATCH REASONING</span>
+                  <p className="reasoning-body">
+                    {currentCandidate?.reasoning || currentItem.recommendedCandidate.reasoning}
+                  </p>
+                </div>
+
+                {/* Routing & Verification Trust Card */}
+                <div className="routing-card">
+                  <div className="routing-row">
+                    <span className="routing-key">CONFIDENCE TIER</span>
+                    <span className="routing-val font-mono">
+                      {currentCandidate?.confidence}% ·{" "}
+                      {currentCandidate && currentCandidate.confidence >= 90
+                        ? "High Confidence"
+                        : currentCandidate && currentCandidate.confidence >= 70
+                        ? "Review Required"
+                        : "Weak / Unmatched"}
+                    </span>
+                  </div>
+                  <div className="routing-row">
+                    <span className="routing-key">ROUTING</span>
+                    <span className="routing-val highlight">{currentItem.routing}</span>
+                  </div>
+
+                  {/* Non-contradictory confidence copy */}
+                  <p className="routing-disclaimer">
+                    {currentCandidate && currentCandidate.confidence >= 90
+                      ? "This is a high-confidence AI recommendation, but verified actuals still require explicit planner approval."
+                      : currentCandidate && currentCandidate.confidence >= 70
+                      ? "This candidate has partial supporting evidence and requires planner verification before linking or progress mutation."
+                      : "This candidate has weak correlation and requires planner investigation before any schedule association."}
+                  </p>
+                </div>
+              </div>
+            </section>
+          </div>
+
+          {/* ========================================================================= */}
+          {/* STICKY BOTTOM DECISION BAR (Compact 54-58px)                              */}
+          {/* ========================================================================= */}
+          <div className="match-decision-bar">
+            <div className="decision-bar-left">
+              {!isAlternativeSelected ? (
+                <div className="decision-candidate-identity">
+                  <span className="decision-label">AI recommendation:</span>
+                  <strong className="decision-confidence font-mono">
+                    {currentCandidate ? `${currentCandidate.confidence}% · High Confidence` : "No match"}
+                  </strong>
+                </div>
+              ) : (
+                <div className="decision-candidate-split">
+                  <div className="decision-split-line">
+                    <span className="decision-label">AI recommendation:</span>
+                    <span className="decision-ref font-mono">
+                      {currentItem.recommendedCandidate.id} · {currentItem.recommendedCandidate.confidence}%
+                    </span>
+                  </div>
+                  <div className="decision-split-line">
+                    <span className="decision-label">Selected candidate:</span>
+                    <strong className="decision-selected font-mono">
+                      {currentCandidate?.id} · {currentCandidate?.confidence}% ({currentCandidate?.confidenceTier === "Review" ? "Review Required" : currentCandidate?.confidenceTier})
+                    </strong>
+                  </div>
+                </div>
+              )}
+
+              {currentItem.status === "Verified" && (
+                <span className="verified-status-tag">
+                  <CheckCircle2 size={13} />
+                  <span>Verified by {currentItem.verifiedBy || "T. Patel (Lead Planner)"}</span>
+                </span>
+              )}
+              {currentItem.status === "Rejected" && (
+                <span className="rejected-status-tag">
+                  <X size={13} />
+                  <span>Rejected ({currentItem.rejectionReason || "Wrong activity"})</span>
+                </span>
+              )}
+              {currentItem.status === "Flagged New Activity" && (
+                <span className="flagged-status-tag">
+                  <Info size={13} />
+                  <span>Flagged as New Activity</span>
+                </span>
+              )}
+            </div>
+
+            <div className="decision-bar-center">
+              <ShieldCheck size={14} className="decision-shield-icon" />
+              <span className="decision-invariance-msg">
+                {currentItem.status === "Verified"
+                  ? "Schedule actuals committed to audit log"
+                  : "Schedule actuals unchanged"}
+              </span>
+            </div>
+
+            <div className="decision-bar-actions">
+              <button
+                className="button destructive reject-btn"
+                onClick={() => setRejectModalOpen(true)}
+                disabled={currentItem.status !== "Needs Review"}
+              >
+                {currentItem.status === "Rejected" ? "Rejected" : "Reject"}
+              </button>
+
+              <button
+                className="button secondary decision-sec-btn"
+                onClick={() => setNewActivityModalOpen(true)}
+                disabled={currentItem.status !== "Needs Review"}
+              >
+                {currentItem.status === "Flagged New Activity" ? "Flagged" : "Mark as New Activity"}
+              </button>
+
+              <button
+                className="button secondary decision-sec-btn"
+                onClick={() => {
+                  const alt = currentItem.alternativeCandidates[0];
+                  if (alt) handleSelectAlternative(alt);
+                }}
+                disabled={currentItem.status !== "Needs Review" || currentItem.alternativeCandidates.length === 0}
+              >
+                Choose Alternative
+              </button>
+
+              <button
+                className={`button primary approve-match-btn ${
+                  currentCandidate && !currentCandidate.isProgressCompatible ? "link-only-btn" : ""
+                }`}
+                onClick={() => setApproveModalOpen(true)}
+                disabled={currentItem.status !== "Needs Review"}
+              >
+                {currentItem.status === "Verified"
+                  ? currentCandidate?.isProgressCompatible
+                    ? "Match Verified"
+                    : "Match Confirmed"
+                  : currentCandidate?.isProgressCompatible
+                  ? "Approve Match"
+                  : "Confirm Match only"}
+              </button>
+            </div>
+          </div>
+        </>
+      )}
+
+      {/* ========================================================================= */}
+      {/* APPROVE / CONFIRM LINK MODAL                                              */}
+      {/* ========================================================================= */}
+      {approveModalOpen && currentCandidate && currentItem && (
+        <div
+          className="overlay"
+          role="presentation"
+          onMouseDown={(e) => e.target === e.currentTarget && setApproveModalOpen(false)}
+        >
+          <div
+            className="modal-shell match-confirm-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="modal-approve-title"
+          >
+            <header className="panel-head">
+              <div>
+                <p className="eyebrow">
+                  {currentCandidate.isProgressCompatible ? "HUMAN VERIFICATION" : "AUDIT LINEAGE ONLY"}
+                </p>
+                <h3 id="modal-approve-title" className="panel-title">
+                  {currentCandidate.isProgressCompatible
+                    ? "Approve Schedule Match"
+                    : "Confirm Activity Link (No Progress Update)"}
+                </h3>
+              </div>
+              <button
+                className="icon-button"
+                onClick={() => setApproveModalOpen(false)}
+                aria-label="Close dialog"
+              >
+                <X size={16} />
+              </button>
+            </header>
+
+            <div className="panel-body">
+              <div className="modal-summary-box">
+                <div className="modal-data-row">
+                  <span className="modal-data-label">Field event:</span>
+                  <span className="modal-data-value">{currentItem.eventTitle}</span>
+                </div>
+                <div className="modal-data-row">
+                  <span className="modal-data-label">Matched activity:</span>
+                  <span className="modal-data-value">
+                    <strong className="font-mono">{currentCandidate.id}</strong> · {currentCandidate.name}
+                  </span>
+                </div>
+                {currentCandidate.isProgressCompatible ? (
+                  <div className="modal-data-row highlight-row">
+                    <span className="modal-data-label">Verified Progress:</span>
+                    <span className="modal-data-value font-mono font-accent">
+                      {currentCandidate.currentProgress}% → {currentCandidate.proposedProgress}% (+
+                      {currentCandidate.deltaProgress} pts)
+                    </span>
+                  </div>
+                ) : (
+                  <div className="modal-data-row highlight-row">
+                    <span className="modal-data-label">Schedule Mutation:</span>
+                    <span className="modal-data-value font-mono mutation-none">
+                      None (Current: {currentCandidate.currentProgress}%, Proposed: —)
+                    </span>
+                  </div>
+                )}
+              </div>
+
+              {currentCandidate.isProgressCompatible ? (
+                <div className="modal-audit-warning">
+                  <div className="warning-icon">
+                    <ShieldCheck size={16} />
+                  </div>
+                  <p className="warning-text">
+                    This action will create a verified match, update the activity’s verified actual
+                    progress and commit the change to the project audit log.
+                  </p>
+                </div>
+              ) : (
+                <div className="modal-audit-warning warning-link-only">
+                  <div className="warning-icon">
+                    <Link2 size={16} />
+                  </div>
+                  <p className="warning-text">
+                    This action creates an audit association between this field event and {currentCandidate.id} for traceability.
+                    No schedule actuals will be modified.
+                  </p>
+                </div>
+              )}
+            </div>
+
+            <footer className="panel-footer">
+              <Button onClick={() => setApproveModalOpen(false)}>Cancel</Button>
+              <Button variant="primary" onClick={handleApprove}>
+                {currentCandidate.isProgressCompatible
+                  ? "Approve & Update Schedule"
+                  : "Confirm Match only"}
+              </Button>
+            </footer>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* REJECT MATCH MODAL                                                        */}
+      {/* ========================================================================= */}
+      {rejectModalOpen && (
+        <div
+          className="overlay"
+          role="presentation"
+          onMouseDown={(e) => e.target === e.currentTarget && setRejectModalOpen(false)}
+        >
+          <div
+            className="modal-shell match-reject-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="modal-reject-title"
+          >
+            <header className="panel-head">
+              <div>
+                <p className="eyebrow">DECISION GOVERNANCE</p>
+                <h3 id="modal-reject-title" className="panel-title">
+                  Reject Match
+                </h3>
+              </div>
+              <button
+                className="icon-button"
+                onClick={() => setRejectModalOpen(false)}
+                aria-label="Close dialog"
+              >
+                <X size={16} />
+              </button>
+            </header>
+
+            <div className="panel-body">
+              <p className="modal-helper-text">
+                Specify why this field update does not match the proposed schedule candidate.
+                Rejection preserves existing schedule actuals.
+              </p>
+
+              <label className="field-group">
+                <span className="field-label">Rejection Reason</span>
+                <select
+                  className="modal-select"
+                  value={rejectReason}
+                  onChange={(e) => setRejectReason(e.target.value)}
+                >
+                  <option value="Wrong activity">Wrong activity</option>
+                  <option value="Insufficient evidence">Insufficient evidence</option>
+                  <option value="Incorrect asset">Incorrect asset</option>
+                  <option value="Incorrect discipline">Incorrect discipline</option>
+                  <option value="Duplicate event">Duplicate event</option>
+                  <option value="Other">Other</option>
+                </select>
+              </label>
+
+              <label className="field-group" style={{ marginTop: 12 }}>
+                <span className="field-label">Planner Note (Optional)</span>
+                <textarea
+                  className="modal-textarea"
+                  rows={3}
+                  placeholder="Add context for the project controls audit trail…"
+                  value={plannerNote}
+                  onChange={(e) => setPlannerNote(e.target.value)}
+                />
+              </label>
+            </div>
+
+            <footer className="panel-footer">
+              <Button onClick={() => setRejectModalOpen(false)}>Cancel</Button>
+              <Button variant="destructive" onClick={handleReject}>
+                Reject Match
+              </Button>
+            </footer>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* MARK AS NEW ACTIVITY MODAL                                                */}
+      {/* ========================================================================= */}
+      {newActivityModalOpen && currentItem && (
+        <div
+          className="overlay"
+          role="presentation"
+          onMouseDown={(e) => e.target === e.currentTarget && setNewActivityModalOpen(false)}
+        >
+          <div
+            className="modal-shell match-new-activity-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="modal-new-act-title"
+          >
+            <header className="panel-head">
+              <div>
+                <p className="eyebrow">SCHEDULE SCOPE</p>
+                <h3 id="modal-new-act-title" className="panel-title">
+                  Potential New Activity
+                </h3>
+              </div>
+              <button
+                className="icon-button"
+                onClick={() => setNewActivityModalOpen(false)}
+                aria-label="Close dialog"
+              >
+                <X size={16} />
+              </button>
+            </header>
+
+            <div className="panel-body">
+              <p className="modal-helper-text">
+                This event will be flagged for planner review as work not represented in the current
+                schedule baseline.
+              </p>
+
+              <div className="modal-summary-box">
+                <div className="modal-data-row">
+                  <span className="modal-data-label">Asset / Scope:</span>
+                  <span className="modal-data-value">{currentItem.structuredExtraction.assetTag}</span>
+                </div>
+                <div className="modal-data-row">
+                  <span className="modal-data-label">Discipline:</span>
+                  <span className="modal-data-value">{currentItem.discipline}</span>
+                </div>
+                <div className="modal-data-row">
+                  <span className="modal-data-label">Location:</span>
+                  <span className="modal-data-value">{currentItem.structuredExtraction.location}</span>
+                </div>
+              </div>
+
+              <div className="modal-audit-warning">
+                <div className="warning-icon">
+                  <Info size={16} />
+                </div>
+                <p className="warning-text">
+                  Flagging this event routes to the baseline change backlog for planner authorization.
+                  It will not mutate schedule items automatically.
+                </p>
+              </div>
+            </div>
+
+            <footer className="panel-footer">
+              <Button onClick={() => setNewActivityModalOpen(false)}>Cancel</Button>
+              <Button variant="primary" onClick={handleMarkNewActivity}>
+                Flag as New Activity
+              </Button>
+            </footer>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* EVIDENCE PREVIEW MODAL (Polished 2-Column Desktop Viewer)                  */}
+      {/* ========================================================================= */}
+      {evidenceModalOpen && currentItem && (
+        <div
+          className="overlay"
+          role="presentation"
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget) {
+              setEvidenceModalOpen(false);
+              evidenceTriggerRef.current?.focus();
+            }
+          }}
+        >
+          <div
+            className="modal-shell match-evidence-modal-wide"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="modal-evidence-title"
+          >
+            <header className="panel-head">
+              <div>
+                <p className="eyebrow">FIELD EVIDENCE RECONCILIATION</p>
+                <h3 id="modal-evidence-title" className="panel-title">
+                  Supporting Evidence · {currentItem.evidence.reference}
+                </h3>
+              </div>
+              <button
+                ref={modalCloseBtnRef}
+                className="icon-button"
+                onClick={() => {
+                  setEvidenceModalOpen(false);
+                  evidenceTriggerRef.current?.focus();
+                }}
+                aria-label="Close evidence viewer"
+              >
+                <X size={16} />
+              </button>
+            </header>
+
+            <div className="modal-body-split">
+              {/* Left ~65%: Large Evidence Image with sensible containment */}
+              <div className="modal-evidence-media-pane">
+                <div className="modal-media-frame">
+                  {currentItem.evidence.imageUrl && !imageLoadError ? (
+                    <img
+                      src={currentItem.evidence.imageUrl}
+                      alt="Field execution capture evidence"
+                      className="modal-media-img"
+                      onError={() => setImageLoadError(true)}
+                    />
+                  ) : (
+                    <div className="modal-media-fallback">
+                      {currentItem.evidence.type === "video" ? (
+                        <Video size={40} className="fallback-icon" />
+                      ) : currentItem.evidence.type === "document" || currentItem.evidence.type === "sheet" ? (
+                        <FileText size={40} className="fallback-icon" />
+                      ) : (
+                        <Camera size={40} className="fallback-icon" />
+                      )}
+                      <span className="fallback-text">
+                        {currentItem.evidence.type === "video"
+                          ? "Field video attachment unavailable"
+                          : currentItem.evidence.type === "document"
+                          ? "Document attachment preview unavailable"
+                          : "Field photo attachment unavailable"}
+                      </span>
+                      <span className="fallback-sub font-mono">{currentItem.evidence.reference}</span>
+                    </div>
+                  )}
+                  {!imageLoadError && (
+                    <div className="modal-media-synthetic-badge">
+                      <span>SYNTHETIC DEMO EVIDENCE</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Right ~35%: Details & AI Observation */}
+              <div className="modal-evidence-details-pane">
+                <span className="details-pane-heading">EVIDENCE DETAILS</span>
+                <div className="details-pane-grid">
+                  <div className="ev-detail-row">
+                    <span className="ev-detail-k">Type</span>
+                    <span className="ev-detail-v">
+                      {currentItem.evidence.type === "video"
+                        ? "Field Video"
+                        : currentItem.evidence.type === "document" || currentItem.evidence.type === "sheet" || currentItem.evidence.type === "transcript"
+                        ? "Field Document"
+                        : "Field Photo"}
+                    </span>
+                  </div>
+                  <div className="ev-detail-row">
+                    <span className="ev-detail-k">Event</span>
+                    <span className="ev-detail-v font-mono">{currentItem.eventId}</span>
+                  </div>
+                  <div className="ev-detail-row">
+                    <span className="ev-detail-k">Timestamp</span>
+                    <span className="ev-detail-v">Captured {currentItem.date} · {currentItem.time}</span>
+                  </div>
+                  <div className="ev-detail-row">
+                    <span className="ev-detail-k">Reported by</span>
+                    <span className="ev-detail-v">{currentItem.structuredExtraction.reportedBy}</span>
+                  </div>
+                  <div className="ev-detail-row">
+                    <span className="ev-detail-k">Role</span>
+                    <span className="ev-detail-v">{currentItem.structuredExtraction.role}</span>
+                  </div>
+                  <div className="ev-detail-row">
+                    <span className="ev-detail-k">Asset</span>
+                    <span className="ev-detail-v font-mono">{currentItem.structuredExtraction.assetTag}</span>
+                  </div>
+                  <div className="ev-detail-row">
+                    <span className="ev-detail-k">Location</span>
+                    <span className="ev-detail-v">{currentItem.structuredExtraction.location}</span>
+                  </div>
+                  <div className="ev-detail-row">
+                    <span className="ev-detail-k">Source</span>
+                    <span className="ev-detail-v">{currentItem.structuredExtraction.source}</span>
+                  </div>
+                  {currentItem.evidence.summary && (
+                    <div className="ev-detail-row ev-detail-summary-row">
+                      <span className="ev-detail-k">Description</span>
+                      <span className="ev-detail-v ev-detail-summary-text">{currentItem.evidence.summary}</span>
+                    </div>
+                  )}
+                  <div className="ev-detail-row">
+                    <span className="ev-detail-k">Evidence Role</span>
+                    <span className="ev-detail-v">Supporting Visual Context</span>
+                  </div>
+                  <div className="ev-detail-row">
+                    <span className="ev-detail-k">Verification</span>
+                    <span className="ev-detail-v verification-unverified">Unverified field source</span>
+                  </div>
+                </div>
+
+                {/* AI Observation Callout */}
+                <div className="evidence-ai-observation-box">
+                  <div className="observation-head">
+                    <Sparkles size={13} className="observation-icon" />
+                    <span className="observation-title">AI OBSERVATION</span>
+                  </div>
+                  <p className="observation-body">
+                    {currentItem.evidence.aiObservation ||
+                      "Pump base and alignment dial indicators are visible. Supporting field evidence captures physical execution indicators; it does not independently prove 78% completion without planner reconciliation."}
+                  </p>
+                  <span className="observation-disclaimer">
+                    Supporting observation · Final schedule mutation requires planner verification
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            <footer className="panel-footer modal-footer-actions">
+              <Button
+                variant="secondary"
+                onClick={() => {
+                  setEvidenceModalOpen(false);
+                  evidenceTriggerRef.current?.focus();
+                }}
+              >
+                Close
+              </Button>
+              <a
+                href={currentItem.evidence.imageUrl || "/evidence/p110-alignment-evidence.jpg"}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="button secondary modal-open-original-btn"
+              >
+                <ArrowUpRight size={14} />
+                <span>Open Original</span>
+              </a>
+            </footer>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}

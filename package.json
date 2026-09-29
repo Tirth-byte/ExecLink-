@@ -1,0 +1,19 @@
+{
+  "name": "execlink",
+  "version": "0.1.0",
+  "private": true,
+  "engines": { "node": ">=20" },
+  "workspaces": ["packages/*", "apps/*"],
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "validate": "node scripts/validate-contracts.mjs",
+    "vectors": "node scripts/generate-canonical-vectors.mjs",
+    "test": "npm run typecheck && npm run validate"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "ajv": "^8.17.1",
+    "ajv-formats": "^3.0.1",
+    "typescript": "^5.6.3"
+  }
+}

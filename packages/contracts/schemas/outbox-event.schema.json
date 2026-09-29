@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://execlink.local/schemas/outbox-event.schema.json",
+  "title": "OutboxEvent",
+  "description": "Written in the same transaction as the state change it announces, so a committed change can never fail to be published. Consumers deduplicate by id.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "id",
+    "projectId",
+    "aggregateType",
+    "aggregateId",
+    "type",
+    "payload",
+    "occurredAt",
+    "publishedAt",
+    "attempts"
+  ],
+  "properties": {
+    "id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "projectId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "aggregateType": {
+      "type": "string",
+      "minLength": 1
+    },
+    "aggregateId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "type": {
+      "type": "string",
+      "minLength": 1
+    },
+    "payload": {
+      "type": "object"
+    },
+    "occurredAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "publishedAt": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date-time"
+    },
+    "attempts": {
+      "type": "integer",
+      "minimum": 0
+    }
+  }
+}

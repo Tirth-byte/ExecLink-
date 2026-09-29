@@ -1,0 +1,18 @@
+# Reviewed exceptions to the non-mutation guard (QA-S01, QA-S02, QA-B02, QA-S03).
+#
+# Format:  <repo-relative/path>[:: <line-spec>] :: <reason>
+#
+#   line-spec is optional and comma-separated: `33`, `33-35`, `12,40-42`.
+#   Omit it to exempt a whole file; supply it to exempt only those lines, so a
+#   reviewed exception stays exactly as narrow as the evidence that justified it.
+#
+# An entry here is a deliberate, reviewed decision, not a workaround:
+#   - QA-B08 fails if the path no longer exists or the reason is empty.
+#   - QA-B09 fails if a line-scoped entry points past EOF, or exempts a line that
+#     no longer violates the guard (a stale exception hides future drift).
+#
+# The authorized runtime writer is services/api/verification.py, which needs no
+# exception: it calls require_role(..., "planner") before it writes and stamps
+# source_verification_id on every actual-progress UPDATE.
+
+services/api/verification_seed.py :: 33 :: Deterministic demo reset, reviewed by QA for god's request 2026-09-26T05-48-45-363Z-18cdcc. Ruling: legitimate exception, not an invariant violation. Evidence: (1) reachability - reset_demo() is called only from the CLI entrypoint at line 56 via `python3 -m services.api.verification_seed`, and no module or route imports it, so no request, role or attacker can trigger it; (2) it establishes genesis rather than mutating recorded reality - it DELETEs all tables then INSERTs rows at version=1, and there is no UPDATE against actual_progress_percent anywhere in the file, unlike verification.py:46 which is the real mutator; (3) determinism - values come from committed fixtures in data/demo/, the sole timestamp is the hardcoded literal 2026-09-26T00:00:00Z, seed-version is pinned to demo-v1, so a re-run is byte-identical; (4) it fabricates no verifications and no audit entries, wiping those tables and never repopulating them, so the hash chain cannot be made to lie, and the seeded 30 percent progress represents the pre-verification baseline that DEMO_FLOW.md then advances by a real audited 45 percent verification. Scoped to the INSERT column list on line 33 only; the other 60 lines of this module stay guarded.

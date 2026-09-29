@@ -1,0 +1,118 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://execlink.local/schemas/verification.schema.json",
+  "title": "Verification",
+  "description": "A planner's decision on a match proposal. A verified decision carries progressPercent and is the only thing that may move an actual; a rejected decision carries none and never does. Rejection is terminal: an approve-after-reject attempt is 409 INVALID_TRANSITION.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "id",
+    "proposalId",
+    "executionEventId",
+    "snapshotId",
+    "plannerId",
+    "decision",
+    "reason",
+    "decidedAt",
+    "auditSequence"
+  ],
+  "properties": {
+    "id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "proposalId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "executionEventId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "snapshotId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "plannerId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Derived from authentication, never from the request body."
+    },
+    "decision": {
+      "enum": [
+        "verified",
+        "rejected"
+      ]
+    },
+    "progressPercent": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 100,
+      "description": "Required when decision is verified, forbidden when rejected."
+    },
+    "actualQuantity": {
+      "$ref": "schedule-activity.schema.json#/$defs/quantity"
+    },
+    "previousProgressPercent": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 100
+    },
+    "reason": {
+      "type": "string",
+      "maxLength": 2000
+    },
+    "note": {
+      "type": "string",
+      "maxLength": 2000
+    },
+    "decidedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "auditSequence": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "The audit entry recording this decision, so the two are joinable without a second lookup."
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "decision": {
+            "const": "verified"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "progressPercent"
+        ],
+        "properties": {
+          "progressPercent": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 100
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "decision": {
+            "const": "rejected"
+          }
+        }
+      },
+      "then": {
+        "not": {
+          "required": [
+            "progressPercent"
+          ]
+        }
+      }
+    }
+  ]
+}

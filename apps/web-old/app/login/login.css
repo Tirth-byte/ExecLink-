@@ -1,0 +1,242 @@
+.login-container {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: var(--ex-color-canvas);
+  color: var(--ex-color-text);
+  font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+.login-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 32px;
+  width: 100%;
+  max-width: 440px;
+}
+
+.login-header .brand-mark {
+  width: 29px;
+  height: 29px;
+  display: flex;
+  align-items: flex-end;
+  gap: 3px;
+  padding: 5px;
+  background: #0b6f91;
+  border-radius: 8px;
+}
+
+.login-header .brand-mark i {
+  display: block;
+  width: 4px;
+  background: #fff;
+  border-radius: 2px;
+}
+.login-header .brand-mark i:nth-child(1) { height: 9px; }
+.login-header .brand-mark i:nth-child(2) { height: 17px; }
+.login-header .brand-mark i:nth-child(3) { height: 13px; }
+
+.login-header .brand-text {
+  font-size: 18px;
+  font-weight: 750;
+  letter-spacing: -.02em;
+  color: var(--ex-color-text);
+}
+
+.login-header .brand-sub {
+  margin-left: auto;
+  font-size: 12px;
+  color: #7f9bb0;
+  font-weight: 500;
+}
+
+.login-card {
+  width: 100%;
+  max-width: 440px;
+  background: var(--ex-color-surface);
+  border: 1px solid #dbe3ea;
+  border-radius: var(--ex-radius-panel, 12px);
+  box-shadow: 0 4px 14px rgba(16, 42, 67, 0.04);
+  padding: 40px;
+  animation: card-enter 0.2s ease-out;
+}
+
+@media (prefers-color-scheme: dark) {
+  .login-card {
+    border-color: #2b3d41;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.2);
+  }
+}
+
+@keyframes card-enter {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.login-welcome {
+  margin-bottom: 32px;
+}
+
+.login-welcome h2 {
+  margin: 0 0 6px;
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+.login-welcome p {
+  margin: 0;
+  font-size: 13px;
+  color: #6d8193;
+}
+
+.login-error {
+  background: #fff0f0;
+  color: #c95547;
+  border: 1px solid #ffdcdc;
+  padding: 12px 16px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 500;
+  margin-bottom: 24px;
+}
+
+@media (prefers-color-scheme: dark) {
+  .login-error {
+    background: rgba(201, 85, 71, 0.1);
+    border-color: rgba(201, 85, 71, 0.2);
+  }
+}
+
+.login-form .form-group {
+  margin-bottom: 20px;
+}
+
+.login-form label {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+  margin-bottom: 8px;
+  color: var(--ex-color-text);
+}
+
+.login-form input {
+  width: 100%;
+  height: 46px;
+  padding: 0 14px;
+  border: 1px solid #d7e0e8;
+  border-radius: 8px;
+  background: var(--ex-color-canvas);
+  color: var(--ex-color-text);
+  font-size: 14px;
+  transition: all 0.15s ease;
+}
+
+@media (prefers-color-scheme: dark) {
+  .login-form input {
+    border-color: #2b3d41;
+  }
+}
+
+.login-form input:focus {
+  outline: none;
+  border-color: #0b6f91;
+  box-shadow: 0 0 0 3px rgba(11, 111, 145, 0.15);
+}
+
+.login-submit {
+  width: 100%;
+  height: 46px;
+  background: #0b6f91;
+  color: white;
+  border: none;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  margin-top: 12px;
+  transition: background 0.12s ease;
+}
+
+.login-submit:hover:not(:disabled) {
+  background: #0b5f7d;
+}
+
+.login-submit:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+}
+
+.login-footer {
+  margin-top: 32px;
+  text-align: center;
+  font-size: 11px;
+  color: #748697;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+}
+
+.login-subtitle {
+  margin-top: 32px;
+  font-size: 11px;
+  color: #6d8193;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  font-weight: 650;
+}
+
+.demo-access {
+  margin-top: 48px;
+  width: 100%;
+  max-width: 440px;
+  border-top: 1px solid #dbe3ea;
+  padding-top: 24px;
+}
+
+@media (prefers-color-scheme: dark) {
+  .demo-access {
+    border-color: #2b3d41;
+  }
+}
+
+.demo-access p {
+  margin: 0 0 12px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #748697;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.demo-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.demo-chips button {
+  background: var(--ex-color-surface);
+  border: 1px solid #d7e0e8;
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--ex-color-text);
+  cursor: pointer;
+  transition: all 0.12s ease;
+}
+
+@media (prefers-color-scheme: dark) {
+  .demo-chips button {
+    border-color: #2b3d41;
+  }
+}
+
+.demo-chips button:hover {
+  border-color: #0b6f91;
+  color: #0b6f91;
+}

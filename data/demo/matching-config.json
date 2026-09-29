@@ -1,0 +1,8 @@
+{
+  "configVersion": "match-config-v1",
+  "engineVersion": "matcher-v1",
+  "weights": { "asset": 0.4, "discipline": 0.2, "location": 0.15, "text": 0.1, "workType": 0.1, "temporal": 0.05 },
+  "thresholds": { "autoSuggest": 0.9, "review": 0.7 },
+  "tieBreaker": ["score:desc", "activityWbs:asc", "activityId:asc"],
+  "workTypeSynonyms": { "rebar-fixing": ["reinforcement", "reinforcement-fixing"], "cable-laying": ["cable-installation"] }
+}

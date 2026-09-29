@@ -1,0 +1,66 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://execlink.local/schemas/execution-event-submit.schema.json",
+  "title": "ExecutionEventSubmit",
+  "description": "The body apps/field POSTs. The reporter identity is NOT accepted from the client: it is derived from the bearer token, so a field device cannot file evidence as someone else. clientEventId is generated on the device before the first send attempt and is what makes an offline retry safe.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "clientEventId",
+    "observedAt",
+    "evidence"
+  ],
+  "properties": {
+    "clientEventId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "description": "Device-generated stable id. Reuse on retry; the server returns the original event rather than creating a second one."
+    },
+    "observedAt": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When the work was observed, which may predate submission by days of offline capture."
+    },
+    "receivedAt": {
+      "type": "null",
+      "description": "Server-assigned. Present only to document that the client must not send it."
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "text",
+        "attachmentIds"
+      ],
+      "properties": {
+        "text": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8000
+        },
+        "transcript": {
+          "type": "string",
+          "maxLength": 20000,
+          "description": "Speech-to-text of a voice note. Original audio stays in attachment storage."
+        },
+        "attachmentIds": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": "Ids returned by the signed upload endpoint, never storage credentials."
+        }
+      }
+    },
+    "clientCapturedLocation": {
+      "$ref": "schedule-activity.schema.json#/$defs/location",
+      "description": "Optional device location. Evidence for the reviewer, never an input that silently overrides extracted facts."
+    },
+    "deviceInfo": {
+      "type": "object",
+      "description": "Non-authoritative capture metadata for support."
+    }
+  }
+}

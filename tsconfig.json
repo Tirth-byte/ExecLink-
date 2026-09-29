@@ -1,0 +1,19 @@
+{
+  "compilerOptions": {
+    "target": "ES2023",
+    "lib": ["ES2023"],
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "verbatimModuleSyntax": true,
+    "allowImportingTsExtensions": true,
+    "types": ["node"]
+  },
+  "include": ["packages/contracts/src/**/*.ts", "packages/design-tokens/*.ts"],
+  "exclude": ["node_modules", "apps", "services"]
+}

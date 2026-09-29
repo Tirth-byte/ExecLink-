@@ -1,0 +1,65 @@
+[
+  {
+    "id": "DPR-DEMO-001",
+    "projectId": "PRJ-DEMO-001",
+    "snapshotId": "SNP-DEMO-001",
+    "reportDate": "2026-09-26",
+    "status": "draft",
+    "preparedBy": "USR-DEMO-005",
+    "preparedAt": "2026-09-26T06:00:00Z",
+    "submittedAt": null,
+    "approvedBy": null,
+    "approvedAt": null,
+    "lines": [
+      {
+        "activityId": "ACT-1.2.1",
+        "wbs": "1.2.1",
+        "discipline": "structural",
+        "workType": "reinforcement",
+        "assetId": "PIER-P12",
+        "plannedStart": "2026-09-24",
+        "plannedFinish": "2026-09-28",
+        "plannedPercentAtReportDate": 50,
+        "actualPercentToDate": 30,
+        "plannedQuantity": { "value": 20, "unit": "t" },
+        "delayDays": 0,
+        "variancePercent": -20,
+        "status": "in_progress",
+        "evidenceEventIds": [],
+        "lastVerifiedAt": null
+      },
+      {
+        "activityId": "ACT-1.2.2",
+        "wbs": "1.2.2",
+        "discipline": "structural",
+        "workType": "formwork",
+        "assetId": "PIER-P12",
+        "plannedStart": "2026-09-26",
+        "plannedFinish": "2026-09-30",
+        "plannedPercentAtReportDate": 0,
+        "actualPercentToDate": 10,
+        "delayDays": 0,
+        "variancePercent": 10,
+        "status": "in_progress",
+        "evidenceEventIds": [],
+        "lastVerifiedAt": null
+      },
+      {
+        "activityId": "ACT-2.1",
+        "wbs": "2.1",
+        "discipline": "electrical",
+        "workType": "cable-installation",
+        "assetId": "STN-03",
+        "plannedStart": "2026-10-01",
+        "plannedFinish": "2026-10-12",
+        "plannedPercentAtReportDate": 0,
+        "actualPercentToDate": 0,
+        "delayDays": 0,
+        "variancePercent": 0,
+        "status": "not_started",
+        "evidenceEventIds": [],
+        "lastVerifiedAt": null
+      }
+    ]
+  }
+]
