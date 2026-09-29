@@ -23,3 +23,6 @@ roster-backups/
 # One-off local migration/diagnostic helpers
 fix.py
 test_login.py
+
+# Local notes may contain environment-specific credentials.
+NOTS.MD
