@@ -11,6 +11,17 @@ DEFAULT_DATABASE = Path(__file__).with_name("execlink.db")
 
 
 def database_path() -> Path:
+    database_url = os.environ.get("DATABASE_URL", "").strip()
+    if database_url:
+        sqlite_prefix = "sqlite:///"
+        if not database_url.startswith(sqlite_prefix):
+            raise RuntimeError(
+                "Only sqlite:/// DATABASE_URL values are supported before the "
+                "planned PostgreSQL migration"
+            )
+        configured_path = Path(database_url.removeprefix(sqlite_prefix))
+        return configured_path if configured_path.is_absolute() else ROOT / configured_path
+
     return Path(os.environ.get("EXECLINK_DATABASE", DEFAULT_DATABASE))
 
 
@@ -23,8 +34,20 @@ def connect(path: Path | str | None = None) -> sqlite3.Connection:
 
 
 def initialise(connection: sqlite3.Connection) -> None:
-    schema = Path(__file__).with_name("migrations") / "sqlite" / "001_initial.sql"
-    connection.executescript(schema.read_text())
+    version = connection.execute("PRAGMA user_version").fetchone()[0]
+    migrations_dir = Path(__file__).with_name("migrations") / "sqlite"
+
+    if version < 1:
+        connection.executescript((migrations_dir / "001_initial.sql").read_text())
+        connection.execute("PRAGMA user_version = 1")
+
+    if version < 2:
+        connection.executescript((migrations_dir / "002_auth.sql").read_text())
+        connection.execute("PRAGMA user_version = 2")
+
+    if version < 3:
+        connection.executescript((migrations_dir / "003_roles.sql").read_text())
+        connection.execute("PRAGMA user_version = 3")
 
 
 @contextmanager

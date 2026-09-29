@@ -7,11 +7,12 @@ from contextlib import asynccontextmanager
 from typing import Any, AsyncIterator
 
 from fastapi import Depends, FastAPI, Header, Query, Request
+from pydantic import BaseModel
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, PlainTextResponse, StreamingResponse
 
 from .audit import append_entry, verify_chain
-from .auth import Principal, authenticate, membership, require_role
+from .auth import Principal, authenticate, membership, require_permission, verify_password, create_jwt, normalize_role, ROLE_PERMISSIONS
 from .db import connect, initialise, transaction
 from .errors import ApiProblem, not_found
 from .idempotency import replay, store
@@ -27,8 +28,23 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     yield
 
 
+from fastapi.middleware.cors import CORSMiddleware
+
 app = FastAPI(title="ExecLink API", version="1.0.0", lifespan=lifespan)
 
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        "http://localhost:8080",
+        "http://127.0.0.1:8080",
+        "http://localhost",
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 def problem_response(problem: ApiProblem, request_id: str) -> JSONResponse:
     return JSONResponse(status_code=problem.status, content={"error": {"code": problem.code, "message": problem.message, "requestId": request_id, "details": problem.details}})
@@ -58,7 +74,62 @@ def require_key(key: str | None) -> str:
     return key
 
 
+
+class LoginRequest(BaseModel):
+    email: str
+    password: str
+
+@app.post("/api/v1/auth/login")
+def login(request: LoginRequest):
+    db = connect()
+    try:
+        user = db.execute("SELECT * FROM users WHERE email=? AND active=1", (request.email,)).fetchone()
+        if not user or not user["password_hash"] or not verify_password(request.password, user["password_hash"]):
+            raise ApiProblem(401, "UNAUTHORIZED", "Invalid email or password")
+
+        token = create_jwt({
+            "sub": user["id"],
+            "email": user["email"],
+            "name": user["full_name"]
+        })
+        return {"token": token, "user": {"id": user["id"], "name": user["full_name"], "email": user["email"]}}
+    finally:
+        db.close()
+
+@app.get("/api/v1/auth/me")
+def get_me(principal: Principal = Depends(authenticate)):
+    db = connect()
+    try:
+        user = db.execute("SELECT * FROM users WHERE id=? AND active=1", (principal.user_id,)).fetchone()
+        if not user:
+            raise ApiProblem(401, "UNAUTHORIZED", "User not found")
+        members = db.execute("SELECT project_id, role, reporting_scope, discipline, area FROM memberships WHERE user_id=? AND active=1", (principal.user_id,)).fetchall()
+        projects = []
+        for m in members:
+            proj = db.execute("SELECT name FROM projects WHERE id=?", (m["project_id"],)).fetchone()
+            if proj:
+                norm_role = normalize_role(m["role"])
+                projects.append({
+                    "project_id": m["project_id"],
+                    "project_name": proj["name"],
+                    "role": norm_role,
+                    "reporting_scope": m["reporting_scope"],
+                    "discipline": m["discipline"],
+                    "area": m["area"],
+                    "permissions": ROLE_PERMISSIONS.get(norm_role, [])
+                })
+        return {
+            "id": user["id"],
+            "name": user["full_name"],
+            "email": user["email"],
+            "active": bool(user["active"]),
+            "memberships": projects
+        }
+    finally:
+        db.close()
+
 @app.get("/api/v1/health")
+
 def health() -> dict[str, str]:
     return {"status": "ok"}
 
@@ -68,7 +139,7 @@ def create_event(project_id: str, body: dict[str, Any], request: Request, princi
     key = require_key(idempotency_key); db = connect(); initialise(db)
     try:
         with transaction(db):
-            require_role(db, project_id, principal, "supervisor", "planner")
+            require_permission(db, project_id, principal, "execution.create")
             route = f"/projects/{project_id}/events"
             prior = replay(db, project_id, principal.user_id, route, key, body)
             if prior: return JSONResponse(status_code=prior[0], content=prior[1])
@@ -102,7 +173,7 @@ def create_proposal(project_id: str, event_id: str, body: dict[str, Any], princi
     key=require_key(idempotency_key); db=connect(); initialise(db)
     try:
         with transaction(db):
-            require_role(db,project_id,principal,"planner"); route=f"/projects/{project_id}/events/{event_id}/proposals"
+            require_permission(db, project_id, principal, "match.review"); route=f"/projects/{project_id}/events/{event_id}/proposals"
             prior=replay(db,project_id,principal.user_id,route,key,body)
             if prior: return JSONResponse(status_code=prior[0],content=prior[1])
             source=db.execute("SELECT * FROM execution_events WHERE id=? AND project_id=?",(event_id,project_id)).fetchone()
@@ -207,7 +278,7 @@ def report(project_id: str, report_type: str, principal: Principal=Depends(authe
 def audit_verify(project_id: str, principal: Principal=Depends(authenticate)):
     db=connect()
     try:
-        require_role(db,project_id,principal,"planner","admin"); return verify_chain(db,project_id)
+        require_permission(db, project_id, principal, "audit.read"); return verify_chain(db,project_id)
     finally: db.close()
 
 

@@ -1,36 +1,31 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import 'core/config/api_config.dart';
 import 'core/theme/app_theme.dart';
 import 'router/app_router.dart';
 
 void main() {
+  if (kDebugMode) {
+    debugPrint('[ExecLink] API: ${ApiConfig.baseUrl}');
+    debugPrint('[ExecLink] Environment: ${ApiConfig.environment}');
+  }
   runApp(const ProviderScope(child: ExecLinkFieldApp()));
 }
 
-class ExecLinkFieldApp extends StatefulWidget {
+class ExecLinkFieldApp extends ConsumerWidget {
   const ExecLinkFieldApp({super.key});
 
-  static const bool _performanceOverlayEnabled = bool.fromEnvironment(
-    'EXECLINK_PERFORMANCE_OVERLAY',
-    defaultValue: false,
-  );
-
   @override
-  State<ExecLinkFieldApp> createState() => _ExecLinkFieldAppState();
-}
+  Widget build(BuildContext context, WidgetRef ref) {
+    final router = ref.watch(appRouterProvider);
 
-class _ExecLinkFieldAppState extends State<ExecLinkFieldApp> {
-  late final appRouter = createAppRouter();
-
-  @override
-  Widget build(BuildContext context) {
     return MaterialApp.router(
       title: 'ExecLink Field',
       debugShowCheckedModeBanner: false,
-      showPerformanceOverlay: ExecLinkFieldApp._performanceOverlayEnabled,
       theme: AppTheme.lightTheme,
-      routerConfig: appRouter,
+      routerConfig: router,
     );
   }
 }

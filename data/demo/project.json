@@ -1,9 +1,41 @@
 {
   "seedVersion": "demo-v1",
-  "project": { "id": "PRJ-METRO-001", "name": "Blue Line Metro Extension", "timezone": "Asia/Kolkata", "activeSnapshotId": "SNP-DEMO-001" },
+  "project": {
+    "id": "PRJ-DEMO-001",
+    "name": "North River Expansion",
+    "timezone": "Asia/Kolkata",
+    "activeSnapshotId": "SNP-DEMO-001"
+  },
   "users": [
-    { "id": "USR-SUP-001", "name": "Asha Rao", "role": "supervisor" },
-    { "id": "USR-PLN-001", "name": "Priya Shah", "role": "planner" },
-    { "id": "USR-VWR-001", "name": "Vikram Sen", "role": "viewer" }
+    {
+      "id": "USR-DEMO-001",
+      "name": "Admin User",
+      "role": "admin"
+    },
+    {
+      "id": "USR-DEMO-002",
+      "name": "Project Manager",
+      "role": "project_manager"
+    },
+    {
+      "id": "USR-DEMO-003",
+      "name": "Lead Planner",
+      "role": "lead_planner"
+    },
+    {
+      "id": "USR-DEMO-004",
+      "name": "Planning Engineer",
+      "role": "planning_engineer"
+    },
+    {
+      "id": "USR-DEMO-005",
+      "name": "Asha Rao",
+      "role": "field_supervisor"
+    },
+    {
+      "id": "USR-DEMO-006",
+      "name": "Viewer Stakeholder",
+      "role": "viewer"
+    }
   ]
 }

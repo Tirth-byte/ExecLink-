@@ -1,21 +1,18 @@
 import 'dart:convert';
 
 import 'package:http/http.dart' as http;
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/execution_event.dart';
 import '../models/schedule_activity.dart';
+import '../core/config/api_config.dart';
 import 'demo_fixtures.dart';
 
 class ApiClient {
-  final String baseUrl;
   final http.Client? client;
   bool useLocalFallback;
 
-  ApiClient({
-    this.baseUrl = 'http://127.0.0.1:8000/api/v1',
-    this.client,
-    this.useLocalFallback = true,
-  });
+  ApiClient({this.client, this.useLocalFallback = true});
 
   http.Client get httpClient => client ?? http.Client();
 
@@ -25,8 +22,15 @@ class ApiClient {
       return DemoFixtures.initialActivities;
     }
     try {
+      final prefs = await SharedPreferences.getInstance();
+      final token = prefs.getString('execlink_token');
+      final headers = {if (token != null) 'Authorization': 'Bearer $token'};
+
       final response = await httpClient
-          .get(Uri.parse('$baseUrl/projects/$projectId/activities'))
+          .get(
+            Uri.parse('${ApiConfig.baseUrl}/projects/$projectId/activities'),
+            headers: headers,
+          )
           .timeout(const Duration(seconds: 3));
 
       if (response.statusCode == 200) {
@@ -61,12 +65,15 @@ class ApiClient {
     }
 
     try {
+      final prefs = await SharedPreferences.getInstance();
+      final token = prefs.getString('execlink_token');
+
       final response = await httpClient
           .post(
-            Uri.parse('$baseUrl/projects/$projectId/events'),
+            Uri.parse('${ApiConfig.baseUrl}/projects/$projectId/events'),
             headers: {
               'Content-Type': 'application/json',
-              'Authorization': 'Bearer USR-SUP-001',
+              if (token != null) 'Authorization': 'Bearer $token',
               'Idempotency-Key': event.clientEventId,
             },
             body: jsonEncode(event.toJson()),

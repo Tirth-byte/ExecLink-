@@ -7,6 +7,7 @@ import '../../core/theme/app_typography.dart';
 import '../../models/execution_event.dart';
 import '../../models/schedule_activity.dart';
 import '../../providers/field_providers.dart';
+import '../../providers/auth_provider.dart';
 import '../../widgets/status_badge.dart';
 
 class HomeView extends ConsumerStatefulWidget {
@@ -223,6 +224,8 @@ class _HomeViewState extends ConsumerState<HomeView> {
       return act.discipline.toLowerCase() == _activityFilter;
     }).toList();
 
+    final user = ref.watch(authProvider).user;
+
     return Scaffold(
       appBar: AppBar(
         title: Column(
@@ -242,7 +245,7 @@ class _HomeViewState extends ConsumerState<HomeView> {
                     borderRadius: BorderRadius.circular(4),
                   ),
                   child: Text(
-                    'PRJ-DEMO-001',
+                    'PRJ-METRO-001',
                     style: AppTypography.monoSm.copyWith(
                       fontSize: 10,
                       color: AppColors.action,
@@ -252,7 +255,9 @@ class _HomeViewState extends ConsumerState<HomeView> {
               ],
             ),
             Text(
-              'Supervisor: Asha | Today: Sep 26, 2026',
+              user != null
+                  ? '${user.role}: ${user.name} | ${user.projectName} | ${user.reportingScope}'
+                  : 'Supervisor: Asha | Today: Sep 26, 2026',
               style: AppTypography.bodySm.copyWith(color: AppColors.textMuted),
             ),
           ],
@@ -271,11 +276,15 @@ class _HomeViewState extends ConsumerState<HomeView> {
                 value: isOffline,
                 activeThumbColor: AppColors.warning,
                 onChanged: (val) {
-                  ref.read(offlineModeProvider).setOffline(val);
-                  ref.read(eventsProvider).toggleOffline(val);
+                  ref.read(offlineModeProvider.notifier).setOffline(val);
+                  ref.read(eventsProvider.notifier).toggleOffline(val);
                 },
               ),
               const SizedBox(width: 8),
+              IconButton(
+                icon: const Icon(Icons.logout, size: 20),
+                onPressed: () => ref.read(authProvider.notifier).logout(),
+              ),
             ],
           ),
         ],

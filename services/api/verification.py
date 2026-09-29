@@ -4,14 +4,14 @@ import sqlite3
 from typing import Any
 
 from .audit import append_entry
-from .auth import Principal, require_role
+from .auth import Principal, require_permission
 from .errors import ApiProblem, not_found
 from .idempotency import replay, store
 from .util import canonical, loads, new_id, now
 
 
 def verify_proposal(db: sqlite3.Connection, project_id: str, proposal_id: str, actor: Principal, key: str, command: dict[str, Any], request_id: str) -> tuple[int, dict[str, Any]]:
-    require_role(db, project_id, actor, "planner")
+    require_permission(db, project_id, actor, "match.verify")
     route = f"/projects/{project_id}/proposals/{proposal_id}/verify"
     prior = replay(db, project_id, actor.user_id, route, key, command)
     if prior:
@@ -56,7 +56,7 @@ def verify_proposal(db: sqlite3.Connection, project_id: str, proposal_id: str, a
 
 
 def reject_proposal(db: sqlite3.Connection, project_id: str, proposal_id: str, actor: Principal, key: str, command: dict[str, Any], request_id: str) -> tuple[int, dict[str, Any]]:
-    require_role(db, project_id, actor, "planner")
+    require_permission(db, project_id, actor, "match.verify")
     route = f"/projects/{project_id}/proposals/{proposal_id}/reject"
     prior = replay(db, project_id, actor.user_id, route, key, command)
     if prior:

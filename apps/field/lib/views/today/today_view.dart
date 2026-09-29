@@ -41,34 +41,70 @@ class TodayView extends ConsumerWidget {
                 borderRadius: BorderRadius.circular(FieldRadius.input),
                 border: Border.all(color: FieldColors.borderSubtle, width: 1),
               ),
-              child: Row(
+              child: Stack(
                 children: [
-                  Expanded(
-                    child: _FilterSegment(
-                      label: 'All',
-                      selected: filter == ActivityFilter.all,
-                      onTap: () =>
-                          ref.read(todayFilterProvider.notifier).state =
-                              ActivityFilter.all,
+                  Positioned.fill(
+                    child: AnimatedAlign(
+                      duration: const Duration(milliseconds: 180),
+                      curve: Curves.easeOutCubic,
+                      alignment: filter == ActivityFilter.all
+                          ? Alignment.centerLeft
+                          : filter == ActivityFilter.needUpdate
+                          ? Alignment.center
+                          : Alignment.centerRight,
+                      child: FractionallySizedBox(
+                        widthFactor: 1 / 3,
+                        child: Container(
+                          decoration: BoxDecoration(
+                            color: FieldColors.brand50,
+                            borderRadius: BorderRadius.circular(
+                              FieldRadius.control,
+                            ),
+                            border: Border.all(
+                              color: FieldColors.brand100,
+                              width: 1,
+                            ),
+                          ),
+                        ),
+                      ),
                     ),
                   ),
-                  Expanded(
-                    child: _FilterSegment(
-                      label: 'Needs update',
-                      selected: filter == ActivityFilter.needUpdate,
-                      onTap: () =>
-                          ref.read(todayFilterProvider.notifier).state =
-                              ActivityFilter.needUpdate,
-                    ),
-                  ),
-                  Expanded(
-                    child: _FilterSegment(
-                      label: 'Completed',
-                      selected: filter == ActivityFilter.completed,
-                      onTap: () =>
-                          ref.read(todayFilterProvider.notifier).state =
-                              ActivityFilter.completed,
-                    ),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: _FilterSegment(
+                          label: 'All',
+                          selected: filter == ActivityFilter.all,
+                          onTap: () {
+                            HapticFeedback.selectionClick();
+                            ref.read(todayFilterProvider.notifier).state =
+                                ActivityFilter.all;
+                          },
+                        ),
+                      ),
+                      Expanded(
+                        child: _FilterSegment(
+                          label: 'Needs update',
+                          selected: filter == ActivityFilter.needUpdate,
+                          onTap: () {
+                            HapticFeedback.selectionClick();
+                            ref.read(todayFilterProvider.notifier).state =
+                                ActivityFilter.needUpdate;
+                          },
+                        ),
+                      ),
+                      Expanded(
+                        child: _FilterSegment(
+                          label: 'Completed',
+                          selected: filter == ActivityFilter.completed,
+                          onTap: () {
+                            HapticFeedback.selectionClick();
+                            ref.read(todayFilterProvider.notifier).state =
+                                ActivityFilter.completed;
+                          },
+                        ),
+                      ),
+                    ],
                   ),
                 ],
               ),
@@ -84,24 +120,71 @@ class TodayView extends ConsumerWidget {
             ),
           ),
         ),
-        if (activities.isEmpty)
-          SliverToBoxAdapter(
-            child: _EmptyToday(onRecord: () => context.push('/quick-update')),
-          )
-        else
-          SliverList.builder(
-            itemCount: activities.length,
-            itemBuilder: (context, index) {
-              final activity = activities[index];
-              return TodayActivityCard(
-                activity: activity,
-                onTapCard: () =>
-                    context.push('/quick-update?activityId=${activity.id}'),
-                onUpdate: () =>
-                    context.push('/quick-update?activityId=${activity.id}'),
-              );
-            },
+        SliverToBoxAdapter(
+          child: AnimatedSize(
+            duration: const Duration(milliseconds: 180),
+            curve: Curves.easeOutCubic,
+            alignment: Alignment.topCenter,
+            child: AnimatedSwitcher(
+              duration: const Duration(milliseconds: 180),
+              switchInCurve: Curves.easeOutCubic,
+              switchOutCurve: Curves.easeOutCubic,
+              layoutBuilder: (currentChild, previousChildren) {
+                return Stack(
+                  alignment: Alignment.topCenter,
+                  children: <Widget>[
+                    ...previousChildren.map(
+                      (child) =>
+                          Positioned(top: 0, left: 0, right: 0, child: child),
+                    ),
+                    if (currentChild != null) currentChild,
+                  ],
+                );
+              },
+              transitionBuilder: (child, animation) {
+                return FadeTransition(
+                  opacity: animation,
+                  child: AnimatedBuilder(
+                    animation: animation,
+                    builder: (context, childWidget) {
+                      final slide = 6.0 * (1.0 - animation.value);
+                      // Reverse slide direction for outgoing items
+                      final isIncoming =
+                          animation.status == AnimationStatus.forward ||
+                          animation.status == AnimationStatus.completed;
+                      final offset = isIncoming ? slide : -slide;
+                      return Transform.translate(
+                        offset: Offset(0.0, offset),
+                        child: childWidget,
+                      );
+                    },
+                    child: child,
+                  ),
+                );
+              },
+              child: activities.isEmpty
+                  ? _EmptyToday(
+                      key: ValueKey('empty-${filter.name}'),
+                      onRecord: () => context.push('/quick-update'),
+                    )
+                  : Column(
+                      key: ValueKey('list-${filter.name}'),
+                      children: activities.map((activity) {
+                        return TodayActivityCard(
+                          key: ValueKey(activity.id),
+                          activity: activity,
+                          onTapCard: () => context.push(
+                            '/quick-update?activityId=${activity.id}',
+                          ),
+                          onUpdate: () => context.push(
+                            '/quick-update?activityId=${activity.id}',
+                          ),
+                        );
+                      }).toList(),
+                    ),
+            ),
           ),
+        ),
         SliverToBoxAdapter(
           child: Padding(
             padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
@@ -135,33 +218,24 @@ class _FilterSegment extends StatelessWidget {
   Widget build(BuildContext context) => Semantics(
     selected: selected,
     button: true,
-    child: AnimatedContainer(
-      duration: FieldMotion.quick,
-      decoration: BoxDecoration(
-        color: selected ? FieldColors.brand50 : Colors.transparent,
+    child: Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
         borderRadius: BorderRadius.circular(FieldRadius.control),
-        border: selected
-            ? Border.all(color: FieldColors.brand100, width: 1)
-            : null,
-      ),
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          onTap: onTap,
-          borderRadius: BorderRadius.circular(FieldRadius.control),
-          child: SizedBox(
-            height: 38,
-            child: Center(
-              child: Text(
-                label,
-                textAlign: TextAlign.center,
-                style: FieldTypography.bodySmBold.copyWith(
-                  fontSize: 12,
-                  color: selected
-                      ? FieldColors.brand700
-                      : FieldColors.textSecondary,
-                ),
+        child: SizedBox(
+          height: 38,
+          child: Center(
+            child: AnimatedDefaultTextStyle(
+              duration: const Duration(milliseconds: 180),
+              curve: Curves.easeOutCubic,
+              style: FieldTypography.bodySmBold.copyWith(
+                fontSize: 12,
+                color: selected
+                    ? FieldColors.brand700
+                    : FieldColors.textSecondary,
               ),
+              child: Text(label, textAlign: TextAlign.center),
             ),
           ),
         ),
@@ -171,7 +245,7 @@ class _FilterSegment extends StatelessWidget {
 }
 
 class _EmptyToday extends StatelessWidget {
-  const _EmptyToday({required this.onRecord});
+  const _EmptyToday({super.key, required this.onRecord});
   final VoidCallback onRecord;
 
   @override

@@ -116,10 +116,6 @@ class ShiftSummaryBar extends StatelessWidget {
   }
 
   Widget _buildDivider() {
-    return Container(
-      width: 1,
-      height: 22,
-      color: FieldColors.borderSubtle,
-    );
+    return Container(width: 1, height: 22, color: FieldColors.borderSubtle);
   }
 }

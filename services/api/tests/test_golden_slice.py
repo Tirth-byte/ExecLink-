@@ -12,8 +12,8 @@ from services.api.reports import REPORT_TYPES, as_csv, build_report
 from services.api.verification_seed import reset_demo
 from services.api.verification import reject_proposal, verify_proposal
 
-PROJECT = "PRJ-METRO-001"
-PLANNER = Principal("USR-PLN-001")
+PROJECT = "PRJ-DEMO-001"
+PLANNER = Principal("USR-DEMO-003")
 
 
 class GoldenSliceTests(unittest.TestCase):
@@ -62,7 +62,7 @@ class GoldenSliceTests(unittest.TestCase):
 
     def test_role_matrix(self) -> None:
         with self.assertRaises(ApiProblem) as supervisor:
-            with transaction(self.db): verify_proposal(self.db, PROJECT, "MPR-DEMO-001", Principal("USR-SUP-001"), "x", self.command(), "REQ")
+            with transaction(self.db): verify_proposal(self.db, PROJECT, "MPR-DEMO-001", Principal("USR-DEMO-005"), "x", self.command(), "REQ")
         self.assertEqual((403, "FORBIDDEN"), (supervisor.exception.status, supervisor.exception.code))
         with self.assertRaises(ApiProblem) as invalid:
             with transaction(self.db): verify_proposal(self.db, PROJECT, "MPR-DEMO-001", Principal("missing"), "x", self.command(), "REQ")

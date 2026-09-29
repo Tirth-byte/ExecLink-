@@ -36,8 +36,7 @@ class CaptureHubView extends StatelessWidget {
               iconBorder: FieldColors.brand100,
               iconColor: FieldColors.brand700,
               title: 'Time Agent',
-              description:
-                  'Describe site events naturally. ExecLink extracts activities, progress, and blockers.',
+              description: 'Describe site events naturally. ExecLink extracts activities, progress, and blockers.',
               button: FieldPrimaryButton(
                 text: 'Open Time Agent',
                 icon: Icons.auto_awesome_rounded,
@@ -67,8 +66,7 @@ class CaptureHubView extends StatelessWidget {
               iconBorder: FieldColors.border,
               iconColor: FieldColors.text,
               title: 'Quick Update',
-              description:
-                  'Manually update progress, quantities, or report site delays against known activities.',
+              description: 'Manually update progress, quantities, or report site delays against known activities.',
               button: FieldSecondaryButton(
                 text: 'Open Quick Update',
                 icon: Icons.edit_note_rounded,

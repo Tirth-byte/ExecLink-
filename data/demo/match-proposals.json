@@ -1,5 +1,5 @@
 [
-  { "id": "MPR-DEMO-001", "projectId": "PRJ-METRO-001", "executionEventId": "EVT-DEMO-001", "snapshotId": "SNP-DEMO-001", "engineVersion": "matcher-v1", "configVersion": "match-config-v1", "mode": "primary", "status": "proposed", "createdAt": "2026-09-26T04:31:02Z", "candidates": [
+  { "id": "MPR-DEMO-001", "projectId": "PRJ-DEMO-001", "executionEventId": "EVT-DEMO-001", "snapshotId": "SNP-DEMO-001", "engineVersion": "matcher-v1", "configVersion": "match-config-v1", "mode": "primary", "status": "proposed", "createdAt": "2026-09-26T04:31:02Z", "candidates": [
     { "activityId": "ACT-1.2.1", "activityWbs": "1.2.1", "score": 0.97, "band": "auto_suggest", "explanation": [
       { "signal": "asset", "score": 1, "weight": 0.4, "contribution": 0.4, "input": { "event": "PIER-P12", "activity": "PIER-P12" }, "explanation": "Exact asset identifier", "missing": false },
       { "signal": "discipline", "score": 1, "weight": 0.2, "contribution": 0.2, "input": { "event": "structural", "activity": "structural" }, "explanation": "Exact discipline", "missing": false },
@@ -9,7 +9,7 @@
       { "signal": "temporal", "score": 0.8, "weight": 0.05, "contribution": 0.04, "input": { "observed": "2026-09-26" }, "explanation": "Observed during planned window", "missing": false }
     ] }
   ] },
-  { "id": "MPR-DEMO-002", "projectId": "PRJ-METRO-001", "executionEventId": "EVT-DEMO-002", "snapshotId": "SNP-DEMO-001", "engineVersion": "matcher-v1", "configVersion": "match-config-v1", "mode": "primary", "status": "proposed", "createdAt": "2026-09-26T05:02:02Z", "candidates": [
+  { "id": "MPR-DEMO-002", "projectId": "PRJ-DEMO-001", "executionEventId": "EVT-DEMO-002", "snapshotId": "SNP-DEMO-001", "engineVersion": "matcher-v1", "configVersion": "match-config-v1", "mode": "primary", "status": "proposed", "createdAt": "2026-09-26T05:02:02Z", "candidates": [
     { "activityId": "ACT-1.2.1", "activityWbs": "1.2.1", "score": 0.79, "band": "review", "explanation": [
       { "signal": "asset", "score": 1, "weight": 0.4, "contribution": 0.4, "input": {}, "explanation": "Exact asset identifier", "missing": false }, { "signal": "discipline", "score": 1, "weight": 0.2, "contribution": 0.2, "input": {}, "explanation": "Exact discipline", "missing": false }, { "signal": "location", "score": 1, "weight": 0.15, "contribution": 0.15, "input": {}, "explanation": "Intervals overlap", "missing": false }, { "signal": "text", "score": 0.2, "weight": 0.1, "contribution": 0.02, "input": {}, "explanation": "Weak activity detail", "missing": false }, { "signal": "workType", "score": 0, "weight": 0.1, "contribution": 0, "input": {}, "explanation": "Work type missing", "missing": true }, { "signal": "temporal", "score": 0.4, "weight": 0.05, "contribution": 0.02, "input": {}, "explanation": "Near planned window", "missing": false }
     ] },
@@ -17,5 +17,5 @@
       { "signal": "asset", "score": 1, "weight": 0.4, "contribution": 0.4, "input": {}, "explanation": "Exact asset identifier", "missing": false }, { "signal": "discipline", "score": 1, "weight": 0.2, "contribution": 0.2, "input": {}, "explanation": "Exact discipline", "missing": false }, { "signal": "location", "score": 1, "weight": 0.15, "contribution": 0.15, "input": {}, "explanation": "Intervals overlap", "missing": false }, { "signal": "text", "score": 0.1, "weight": 0.1, "contribution": 0.01, "input": {}, "explanation": "Very weak activity detail", "missing": false }, { "signal": "workType", "score": 0, "weight": 0.1, "contribution": 0, "input": {}, "explanation": "Work type missing", "missing": true }, { "signal": "temporal", "score": 0.4, "weight": 0.05, "contribution": 0.02, "input": {}, "explanation": "Near planned window", "missing": false }
     ] }
   ] },
-  { "id": "MPR-DEMO-003", "projectId": "PRJ-METRO-001", "executionEventId": "EVT-DEMO-003", "snapshotId": "SNP-DEMO-001", "engineVersion": "matcher-v1", "configVersion": "match-config-v1", "mode": "deterministic_fallback", "status": "proposed", "createdAt": "2026-09-26T05:31:02Z", "candidates": [] }
+  { "id": "MPR-DEMO-003", "projectId": "PRJ-DEMO-001", "executionEventId": "EVT-DEMO-003", "snapshotId": "SNP-DEMO-001", "engineVersion": "matcher-v1", "configVersion": "match-config-v1", "mode": "deterministic_fallback", "status": "proposed", "createdAt": "2026-09-26T05:31:02Z", "candidates": [] }
 ]

@@ -1,0 +1,18 @@
+# Reviewed exceptions to the non-mutation guard (QA-S01, QA-S02, QA-B02, QA-S03).
+#
+# Format:  <repo-relative/path>[:: <line-spec>] :: <reason>
+#
+#   line-spec is optional and comma-separated: `33`, `33-35`, `12,40-42`.
+#   Omit it to exempt a whole file; supply it to exempt only those lines, so a
+#   reviewed exception stays exactly as narrow as the evidence that justified it.
+#
+# An entry here is a deliberate, reviewed decision, not a workaround:
+#   - QA-B08 fails if the path no longer exists or the reason is empty.
+#   - QA-B09 fails if a line-scoped entry points past EOF, or exempts a line that
+#     no longer violates the guard (a stale exception hides future drift).
+#
+# The authorized runtime writer is services/api/verification.py, which needs no
+# exception: it calls require_permission(..., "match.verify") before it writes and stamps
+# source_verification_id on every actual-progress UPDATE.
+
+services/api/verification_seed.py :: 46 :: Deterministic demo reset, reviewed by QA. Ruling: legitimate exception, not an invariant violation. Evidence: (1) reset_demo() is reachable only from the explicit development/CLI reset workflow, never from an API route; (2) it establishes genesis after clearing all domain tables rather than mutating recorded reality; (3) values and password salt are deterministic committed demo inputs; (4) it creates no verification or audit entries. Scoped only to the activities INSERT column list containing actual_progress_percent.

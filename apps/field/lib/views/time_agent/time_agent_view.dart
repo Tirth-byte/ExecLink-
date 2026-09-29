@@ -1,1268 +1,904 @@
-import 'dart:async';
-
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import 'package:speech_to_text/speech_to_text.dart';
 
 import '../../core/theme/app_colors.dart';
-import '../../core/theme/app_theme.dart';
 import '../../core/theme/app_typography.dart';
 import '../../models/common_types.dart';
 import '../../models/execution_event.dart';
-import '../../models/schedule_activity.dart';
 import '../../providers/field_providers.dart';
 import '../../services/time_agent_extractor.dart';
 import '../../widgets/confidence_badge.dart';
-import '../../widgets/evidence_attachment_field.dart';
-import '../../widgets/field_buttons.dart';
-import '../../widgets/status_badge.dart';
 
 class TimeAgentView extends ConsumerStatefulWidget {
   const TimeAgentView({super.key});
+
   @override
   ConsumerState<TimeAgentView> createState() => _TimeAgentViewState();
 }
 
-class _TimeAgentViewState extends ConsumerState<TimeAgentView> {
-  final _transcript = TextEditingController();
-  final _description = TextEditingController();
-  final _asset = TextEditingController();
-  final _reason = TextEditingController();
-  String _eventType = 'completed';
-  String _discipline = 'mechanical';
-  bool _submitting = false;
-  final SpeechToText _speech = SpeechToText();
-  bool _listening = false;
-  int _listeningSeconds = 0;
-  Timer? _recordingTimer;
-  List<EvidenceAttachment> _attachments = [];
-  final Set<int> _acceptedFacts = {};
-  int? _editingIndex;
-  final Set<int> _selectedEvents = {};
+class _TimeAgentViewState extends ConsumerState<TimeAgentView>
+    with SingleTickerProviderStateMixin {
+  final TextEditingController _transcriptController = TextEditingController();
+  final TextEditingController _descriptionController = TextEditingController();
+  final TextEditingController _assetController = TextEditingController();
+  final TextEditingController _timeController = TextEditingController();
+  final TextEditingController _delayReasonController = TextEditingController();
+  final TextEditingController _quantityController = TextEditingController();
+
+  String _selectedEventType = 'completed';
+  String _selectedDiscipline = 'mechanical';
+  bool _includePhotoEvidence = true;
+  bool _isListening = false;
+  late AnimationController _pulseController;
+
+  static const String goldenP110Prompt =
+      'Line 24 P-110 erection completed at 10:35. Hydrotest blocked due to permit.';
+  static const String goldenP12RebarPrompt =
+      'Fixed 3 tonnes of rebar at Pier P12, chainage 12+410 to 12+425.';
+  static const String demoAmbiguousPrompt =
+      'Crew working at P12; preparation continuing.';
+  static const String demoUnmatchedPrompt =
+      'Drain cleaning near depot entrance.';
 
   @override
   void initState() {
     super.initState();
+    _pulseController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1000),
+    );
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _applyTranscript(goldenP110Prompt);
+    });
   }
 
   @override
   void dispose() {
-    _transcript.dispose();
-    _description.dispose();
-    _asset.dispose();
-    _reason.dispose();
-    _recordingTimer?.cancel();
-    _speech.stop();
+    _pulseController.dispose();
+    _transcriptController.dispose();
+    _descriptionController.dispose();
+    _assetController.dispose();
+    _timeController.dispose();
+    _delayReasonController.dispose();
+    _quantityController.dispose();
     super.dispose();
   }
 
-  void _analyze() {
-    final value = _transcript.text.trim();
-    if (value.isEmpty) return;
-    ref.read(timeAgentProvider).setTranscript(value);
-    final facts = ref.read(timeAgentProvider).multiFacts;
-    setState(() {
-      _editingIndex = null;
-      _selectedEvents.clear();
-      for (var i = 0; i < facts.length; i++) {
-        _selectedEvents.add(i);
-      }
-    });
-  }
+  void _applyTranscript(String text) {
+    _transcriptController.text = text;
+    ref.read(timeAgentProvider).setTranscript(text);
 
-  Future<void> _toggleListening() async {
-    if (_listening) {
-      await _speech.stop();
-      _recordingTimer?.cancel();
-      setState(() => _listening = false);
-      HapticFeedback.mediumImpact();
-      if (_transcript.text.trim().isNotEmpty) _analyze();
-      return;
+    final current = ref.read(timeAgentProvider).extraction;
+    if (current != null) {
+      _loadFactIntoForm(current);
     }
-    final ready = await _speech.initialize(
-      onStatus: (status) {
-        if ((status == 'done' || status == 'notListening') && mounted) {
-          _recordingTimer?.cancel();
-          setState(() => _listening = false);
-        }
-      },
-      onError: (_) {
-        if (!mounted) return;
-        _recordingTimer?.cancel();
-        setState(() => _listening = false);
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text(
-              'Voice transcription failed. Your typed update is unchanged.',
-            ),
-          ),
-        );
-      },
-    );
-    if (!ready || !mounted) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text(
-              'Speech recognition is unavailable. Type the update instead.',
-            ),
-          ),
-        );
-      }
-      return;
-    }
-    setState(() {
-      _listening = true;
-      _listeningSeconds = 0;
-    });
-    HapticFeedback.mediumImpact();
-    _recordingTimer = Timer.periodic(const Duration(seconds: 1), (_) {
-      if (mounted) setState(() => _listeningSeconds++);
-    });
-    await _speech.listen(
-      listenOptions: SpeechListenOptions(
-        listenFor: const Duration(minutes: 2),
-        pauseFor: const Duration(seconds: 4),
-      ),
-      onResult: (result) {
-        _transcript.value = TextEditingValue(
-          text: result.recognizedWords,
-          selection: TextSelection.collapsed(
-            offset: result.recognizedWords.length,
-          ),
-        );
-      },
-    );
   }
 
-  void _loadFact(ExtractionResult fact) {
+  void _loadFactIntoForm(ExtractionResult fact) {
     setState(() {
-      _description.text = fact.description;
-      _asset.text = fact.facts.assetId ?? '';
-      _reason.text = fact.facts.delayReason ?? '';
-      _eventType = fact.eventType;
-      _discipline = fact.facts.discipline ?? 'mechanical';
+      _descriptionController.text = fact.description;
+      _assetController.text = fact.facts.assetId ?? '';
+      _selectedEventType = fact.eventType;
+      _selectedDiscipline = fact.facts.discipline ?? 'mechanical';
+      _timeController.text =
+          '${fact.observedTimestamp.hour.toString().padLeft(2, '0')}:${fact.observedTimestamp.minute.toString().padLeft(2, '0')}';
+      _delayReasonController.text = fact.facts.delayReason ?? '';
+      _quantityController.text = fact.facts.quantity != null
+          ? '${fact.facts.quantity!.value} ${fact.facts.quantity!.unit}'
+          : '';
     });
   }
 
-  void _saveFact() {
-    final notifier = ref.read(timeAgentProvider);
-    final current = notifier.extraction;
+  void _saveCurrentFormIntoNotifier() {
+    final state = ref.read(timeAgentProvider);
+    final current = state.extraction;
     if (current == null) return;
-    notifier.updateCurrentFact(
-      current.copyWith(
-        description: _description.text.trim(),
-        eventType: _eventType,
-        facts: current.facts.copyWith(
-          eventType: _eventType,
-          assetId: _asset.text.trim().isEmpty ? null : _asset.text.trim(),
-          discipline: _discipline,
-          delayReason:
-              (_eventType == 'blocked' || _eventType == 'delayed') &&
-                  _reason.text.trim().isNotEmpty
-              ? _reason.text.trim()
-              : null,
-        ),
-      ),
+
+    final updatedFacts = current.facts.copyWith(
+      eventType: _selectedEventType,
+      assetId: _assetController.text.trim().isNotEmpty
+          ? _assetController.text.trim()
+          : null,
+      discipline: _selectedDiscipline,
+      delayReason: _delayReasonController.text.trim().isNotEmpty
+          ? _delayReasonController.text.trim()
+          : null,
     );
+
+    final updatedResult = current.copyWith(
+      description: _descriptionController.text.trim(),
+      eventType: _selectedEventType,
+      facts: updatedFacts,
+    );
+
+    ref.read(timeAgentProvider).updateCurrentFact(updatedResult);
   }
 
   void _selectFact(int index) {
-    _saveFact();
+    _saveCurrentFormIntoNotifier();
     ref.read(timeAgentProvider).selectFactIndex(index);
     final fact = ref.read(timeAgentProvider).extraction;
-    if (fact != null) _loadFact(fact);
-  }
-
-  void _editEvent(int index) {
-    if (_editingIndex != null && _editingIndex != index) {
-      _saveFact();
+    if (fact != null) {
+      _loadFactIntoForm(fact);
     }
-    _selectFact(index);
-    setState(() => _editingIndex = index);
   }
 
-  void _doneEditing() {
-    _saveFact();
-    setState(() => _editingIndex = null);
-  }
-
-  void _acceptMatch(int index) {
-    setState(() => _acceptedFacts.add(index));
-    HapticFeedback.selectionClick();
-  }
-
-  Future<void> _changeMatch(int index) async {
-    _selectFact(index);
-    final activities = ref.read(activitiesProvider).activities;
-    final selected = await showModalBottomSheet<ScheduleActivity>(
-      context: context,
-      showDragHandle: true,
-      backgroundColor: FieldColors.surface,
-      isScrollControlled: true,
-      builder: (sheetContext) => SafeArea(
-        top: false,
-        child: ListView(
-          shrinkWrap: true,
-          padding: const EdgeInsets.fromLTRB(12, 0, 12, 16),
-          children: [
-            const ListTile(
-              title: Text(
-                'Search schedule',
-                style: FieldTypography.sectionTitle,
-              ),
-              subtitle: Text('Choose the activity this update refers to.'),
+  void _simulateVoiceCapture() {
+    setState(() => _isListening = true);
+    _pulseController.repeat(reverse: true);
+    Future.delayed(const Duration(milliseconds: 800), () {
+      if (mounted) {
+        _pulseController.stop();
+        setState(() => _isListening = false);
+        _applyTranscript(goldenP110Prompt);
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Voice audio transcribed and multi-fact preview generated.',
             ),
-            for (final activity in activities)
-              ListTile(
-                title: Text(activity.name),
-                subtitle: Text('${activity.id} · ${activity.assetId}'),
-                onTap: () => Navigator.pop(sheetContext, activity),
-              ),
-          ],
-        ),
-      ),
-    );
-    if (selected == null) return;
-    final notifier = ref.read(timeAgentProvider);
-    final current = notifier.extraction;
-    if (current == null) return;
-    notifier.updateCurrentFact(
-      current.copyWith(
-        suggestedActivityId: selected.id,
-        suggestedActivityName: selected.name,
-        confidenceScore: 1,
-        matchBand: 'supervisor_selected',
-      ),
-    );
-    _loadFact(notifier.extraction!);
-    _acceptMatch(index);
-  }
-
-  String _eventTitle(ExtractionResult factItem, bool isEditing) {
-    if (isEditing && _description.text.trim().isNotEmpty) {
-      return _description.text.trim();
-    }
-    final desc = factItem.description;
-    final lower = desc.toLowerCase();
-    if (lower.contains('erection')) {
-      return 'P-110 equipment erection';
-    }
-    if (lower.contains('hydrotest')) {
-      return 'Hydrotest — Line 24 P-110';
-    }
-    return desc
-        .replaceAll(
-          RegExp(r'\s+completed(\s+at\s+\d{1,2}:\d{2})?', caseSensitive: false),
-          '',
-        )
-        .replaceAll(
-          RegExp(r'\s+blocked(\s+due\s+to\s+.*)?', caseSensitive: false),
-          '',
-        )
-        .replaceAll(
-          RegExp(r'\s+delayed(\s+due\s+to\s+.*)?', caseSensitive: false),
-          '',
-        )
-        .trim();
-  }
-
-  String _formatReason(String? reason) {
-    if (reason == null || reason.isEmpty) return 'Permit';
-    final stripped = reason
-        .replaceFirst(
-          RegExp(r'^(?:Blocked|Delayed)\s+due\s+to\s+', caseSensitive: false),
-          '',
-        )
-        .replaceFirst(RegExp(r'\s+delay$', caseSensitive: false), '')
-        .trim();
-    if (stripped.isEmpty) return 'Permit';
-    return stripped[0].toUpperCase() + stripped.substring(1);
-  }
-
-  Future<ExecutionEvent> _submitFact(ExtractionResult fact, int index) {
-    final now = DateTime.now();
-    final id = 'EVT-FIELD-${now.millisecondsSinceEpoch}-$index';
-    return ref
-        .read(eventsProvider)
-        .submitEvent(
-          ExecutionEvent(
-            id: id,
-            projectId: 'PRJ-DEMO-001',
-            reporterId: 'USR-SUP-001',
-            observedAt: fact.observedTimestamp.toUtc().toIso8601String(),
-            receivedAt: now.toUtc().toIso8601String(),
-            evidence: Evidence(
-              text: fact.description,
-              transcript: _transcript.text.trim(),
-              attachmentIds: _attachments.map((item) => item.id).toList(),
-              attachments: _attachments,
-            ),
-            extractedFacts: fact.facts,
-            status: 'submitted',
-            clientEventId: id,
-            syncStatus: SyncStatus.synced,
+            duration: Duration(seconds: 2),
           ),
         );
+      }
+    });
   }
 
-  Future<void> _submitSingle(int index) async {
-    if (_submitting) return;
-    _saveFact();
+  Future<void> _submitSingleProposal() async {
+    _saveCurrentFormIntoNotifier();
     final state = ref.read(timeAgentProvider);
-    if (index >= state.multiFacts.length) return;
-    final fact = state.multiFacts[index];
-    setState(() => _submitting = true);
-    await _submitFact(fact, index);
-    if (!mounted) return;
-    setState(() => _submitting = false);
-    HapticFeedback.mediumImpact();
-    final offline = ref.read(offlineModeProvider).isOffline;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          offline
-              ? '1 update saved offline. Will sync automatically.'
-              : '1 update recorded. Awaiting planner verification.',
-        ),
+    final ext = state.extraction;
+    if (ext == null) return;
+
+    final eventId = 'EVT-FIELD-${DateTime.now().millisecondsSinceEpoch}';
+    final nowIso = DateTime.now().toUtc().toIso8601String();
+
+    final newEvent = ExecutionEvent(
+      id: eventId,
+      projectId: 'PRJ-DEMO-001',
+      reporterId: 'USR-SUP-001',
+      observedAt: nowIso,
+      receivedAt: nowIso,
+      evidence: Evidence(
+        text: ext.description,
+        transcript: _transcriptController.text.trim(),
+        attachmentIds: _includePhotoEvidence
+            ? [
+                'ATT-VOICE-${DateTime.now().millisecondsSinceEpoch}',
+                'ATT-SITE-PHOTO',
+              ]
+            : ['ATT-VOICE-${DateTime.now().millisecondsSinceEpoch}'],
       ),
+      extractedFacts: ext.facts,
+      status: 'submitted',
+      clientEventId: eventId,
+      syncStatus: SyncStatus.synced,
     );
-    context.go('/history');
+
+    final submitted = await ref.read(eventsProvider).submitEvent(newEvent);
+    if (mounted) _showSubmissionDialog([submitted]);
   }
 
-  Future<void> _submit() async {
-    if (_submitting) return;
-    if (_editingIndex != null) {
-      _saveFact();
-    }
+  Future<void> _submitAllFacts() async {
+    _saveCurrentFormIntoNotifier();
     final state = ref.read(timeAgentProvider);
-    final allFacts = state.multiFacts;
-    final factsToSubmit = [
-      for (var i = 0; i < allFacts.length; i++)
-        if (_selectedEvents.contains(i)) allFacts[i],
-    ];
+    final factsToSubmit = state.multiFacts.isNotEmpty
+        ? state.multiFacts
+        : (state.extraction != null
+              ? [state.extraction!]
+              : <ExtractionResult>[]);
+
     if (factsToSubmit.isEmpty) return;
-    setState(() => _submitting = true);
-    for (var i = 0; i < factsToSubmit.length; i++) {
-      await _submitFact(factsToSubmit[i], i);
-    }
-    if (!mounted) return;
-    setState(() => _submitting = false);
-    HapticFeedback.mediumImpact();
-    final offline = ref.read(offlineModeProvider).isOffline;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          offline
-              ? '${factsToSubmit.length} update${factsToSubmit.length == 1 ? '' : 's'} saved offline. Will sync automatically.'
-              : '${factsToSubmit.length} update${factsToSubmit.length == 1 ? '' : 's'} recorded. Awaiting planner verification.',
+
+    final List<ExecutionEvent> submittedEvents = [];
+    final nowIso = DateTime.now().toUtc().toIso8601String();
+
+    for (int i = 0; i < factsToSubmit.length; i++) {
+      final fact = factsToSubmit[i];
+      final eventId = 'EVT-FIELD-${DateTime.now().millisecondsSinceEpoch}-$i';
+
+      final newEvent = ExecutionEvent(
+        id: eventId,
+        projectId: 'PRJ-DEMO-001',
+        reporterId: 'USR-SUP-001',
+        observedAt: nowIso,
+        receivedAt: nowIso,
+        evidence: Evidence(
+          text: fact.description,
+          transcript: _transcriptController.text.trim(),
+          attachmentIds: _includePhotoEvidence
+              ? [
+                  'ATT-VOICE-${DateTime.now().millisecondsSinceEpoch}-$i',
+                  'ATT-SITE-PHOTO',
+                ]
+              : ['ATT-VOICE-${DateTime.now().millisecondsSinceEpoch}-$i'],
         ),
-      ),
-    );
-    context.go('/history');
+        extractedFacts: fact.facts,
+        status: 'submitted',
+        clientEventId: eventId,
+        syncStatus: SyncStatus.synced,
+      );
+
+      final submitted = await ref.read(eventsProvider).submitEvent(newEvent);
+      submittedEvents.add(submitted);
+    }
+
+    if (mounted) _showSubmissionDialog(submittedEvents);
   }
 
-  @override
-  Widget build(BuildContext context) {
-    
-    final state = ref.watch(timeAgentProvider);
-    final fact = state.extraction;
-    final facts = state.multiFacts;
-
-    return Scaffold(
-      backgroundColor: FieldColors.canvas,
-      resizeToAvoidBottomInset: true,
-      appBar: AppBar(
-        backgroundColor: FieldColors.surface,
-        surfaceTintColor: Colors.transparent,
-        iconTheme: IconThemeData(color: FieldColors.text),
-        titleTextStyle: FieldTypography.sectionTitle.copyWith(
-          color: FieldColors.text,
-          fontSize: 18,
-        ),
-        title: const Text('Time Agent'),
-        leading: IconButton(
-          tooltip: 'Back',
-          icon: const Icon(Icons.arrow_back_rounded),
-          onPressed: () => context.pop(),
-        ),
-      ),
-      body: ListView(
-        keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
-        padding: const EdgeInsets.fromLTRB(16, 12, 16, 132),
-        children: [
-          Text(
-            'Tell ExecLink what happened',
-            style: FieldTypography.sectionTitle.copyWith(fontSize: 18),
-          ),
-          const SizedBox(height: 10),
-
-          // Voice capture button (canonical brand/danger styling)
-          Center(
-            child: Semantics(
-              button: true,
-              label: _listening ? 'Stop voice capture' : 'Start voice capture',
-              child: Material(
-                color: _listening ? FieldColors.dangerBg : FieldColors.actionBg,
-                borderRadius: BorderRadius.circular(FieldRadius.input),
-                child: InkWell(
-                  onTap: _toggleListening,
-                  borderRadius: BorderRadius.circular(FieldRadius.input),
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 18,
-                      vertical: 10,
-                    ),
-                    decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(FieldRadius.input),
-                      border: Border.all(
-                        color: _listening ? FieldColors.dangerBorder : FieldColors.actionBorder,
-                        width: 1,
-                      ),
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(
-                          _listening ? Icons.stop_rounded : Icons.mic_rounded,
-                          size: 22,
-                          color: _listening ? FieldColors.danger : FieldColors.action,
-                        ),
-                        const SizedBox(width: 8),
-                        Text(
-                          _listening
-                              ? 'Listening… ${(_listeningSeconds ~/ 60).toString().padLeft(2, '0')}:${(_listeningSeconds % 60).toString().padLeft(2, '0')}'
-                              : 'Tap to speak',
-                          style: FieldTypography.bodyBold.copyWith(
-                            color: _listening ? FieldColors.danger : FieldColors.action,
-                            fontSize: 14,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          ),
-          const SizedBox(height: 10),
-
-          TextField(
-            key: const Key('time-agent-transcript'),
-            controller: _transcript,
-            minLines: 2,
-            maxLines: 5,
-            textCapitalization: TextCapitalization.sentences,
-            decoration: const InputDecoration(
-              hintText: 'Describe what happened on site…',
-            ),
-            onChanged: (_) => setState(() {}),
-          ),
-          const SizedBox(height: 8),
-
-          SizedBox(
-            width: double.infinity,
-            child: FilledButton.icon(
-              onPressed: _transcript.text.trim().isEmpty ? null : _analyze,
-              style: FilledButton.styleFrom(
-                backgroundColor: FieldColors.action,
-                foregroundColor: FieldColors.surface,
-                minimumSize: const Size(double.infinity, 44),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(FieldRadius.input),
-                ),
-                textStyle: FieldTypography.button,
-              ),
-              icon: const Icon(Icons.manage_search_rounded, size: 18),
-              label: const Text('Analyze update'),
-            ),
-          ),
-          const SizedBox(height: 8),
-
-          // Screen 3 Helper Section: When empty and not extracting
-          if (facts.isEmpty && !state.isExtracting) ...[
-            const SizedBox(height: 16),
-            Container(
-              padding: const EdgeInsets.all(14),
-              decoration: BoxDecoration(
-                color: FieldColors.surface,
-                borderRadius: BorderRadius.circular(FieldRadius.card),
-                border: Border.all(color: FieldColors.borderSubtle),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Icon(
-                        Icons.tips_and_updates_outlined,
-                        size: 15,
-                        color: FieldColors.action,
-                      ),
-                      const SizedBox(width: 6),
-                      Text(
-                        'Try saying',
-                        style: FieldTypography.cardTitle.copyWith(
-                          fontSize: 12.5,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 8),
-                  Material(
-                    color: FieldColors.surface,
-                    borderRadius: BorderRadius.circular(FieldRadius.control),
-                    child: InkWell(
-                      borderRadius: BorderRadius.circular(FieldRadius.control),
-                      onTap: () {
-                        setState(() {
-                          _transcript.text = 'P-110 erection completed at 10:35. Hydrotest blocked due to permit.';
-                        });
-                        HapticFeedback.selectionClick();
-                      },
-                      child: Container(
-                        width: double.infinity,
-                        padding: const EdgeInsets.all(10),
-                        decoration: BoxDecoration(
-                          borderRadius: BorderRadius.circular(
-                            FieldRadius.control,
-                          ),
-                          border: Border.all(color: FieldColors.border),
-                        ),
-                        child: Text(
-                          '“P-110 erection completed at 10:35.\nHydrotest blocked due to permit.”',
-                          style: FieldTypography.monoSm.copyWith(
-                            fontSize: 12,
-                            color: FieldColors.text,
-                            height: 1.35,
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    'ExecLink can identify multiple site events from one update.',
-                    style: FieldTypography.metadata.copyWith(
-                      color: FieldColors.textSecondary,
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                  Wrap(
-                    spacing: 6,
-                    runSpacing: 6,
-                    children: [
-                      _exampleChip(
-                        'Completed work',
-                        'P-110 erection completed at 10:35',
-                      ),
-                      _exampleChip(
-                        'Progress update',
-                        'Fixed 3 tonnes rebar at Pier P12',
-                      ),
-                      _exampleChip(
-                        'Blocker',
-                        'Hydrotest blocked due to permit',
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-          ],
-
-          // Screen 4 Analyzing State: Deliberate progress feedback
-          if (state.isExtracting) ...[
-            const SizedBox(height: 16),
-            Container(
-              padding: const EdgeInsets.all(14),
-              decoration: BoxDecoration(
-                color: FieldColors.surface,
-                borderRadius: BorderRadius.circular(FieldRadius.card),
-                border: Border.all(color: FieldColors.actionBorder),
-              ),
-              child: Row(
-                children: [
-                  const SizedBox.square(
-                    dimension: 20,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      color: FieldColors.action,
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          'Analyzing field update…',
-                          style: FieldTypography.bodyBold.copyWith(
-                            fontSize: 13.5,
-                          ),
-                        ),
-                        const SizedBox(height: 2),
-                        Text(
-                          'Extracting activities, progress and blockers',
-                          style: FieldTypography.metadata.copyWith(
-                            color: FieldColors.textSecondary,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
-
-          // Screen 5 Extracted / Result / Preview State: Distinct Structured Events
-          if (facts.isNotEmpty) ...[
-            const SizedBox(height: 20),
-            Row(
-              children: [
-                const Icon(
-                  Icons.auto_awesome_rounded,
-                  size: 16,
-                  color: FieldColors.action,
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'ExecLink understood',
-                        style: FieldTypography.sectionTitle.copyWith(
-                          fontSize: 18,
-                        ),
-                      ),
-                      Text(
-                        '${facts.length} events detected · Review before submitting',
-                        style: FieldTypography.metadataMedium.copyWith(
-                          color: FieldColors.action,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-
-            // Render each extracted fact as a distinct structured card
-            ...facts.asMap().entries.map((entry) {
-              final index = entry.key;
-              final factItem = entry.value;
-              final isSelected = index == state.selectedFactIndex;
-              final statusValue = isSelected ? _eventType : factItem.eventType;
-              final hasTime =
-                  factItem.observedTimestamp.hour != 0 ||
-                  factItem.observedTimestamp.minute != 0;
-              final timeString = hasTime
-                  ? '${factItem.observedTimestamp.hour.toString().padLeft(2, '0')}:${factItem.observedTimestamp.minute.toString().padLeft(2, '0')}'
-                  : null;
-
-              final isEditing = _editingIndex == index;
-              final isSelectedForSubmit = _selectedEvents.contains(index);
-              final displayTitle = _eventTitle(factItem, isEditing);
-              final assetStr = (isEditing && _asset.text.isNotEmpty)
-                  ? 'Asset ${_asset.text.trim()}'
-                  : (factItem.facts.assetId != null &&
-                        factItem.facts.assetId!.isNotEmpty)
-                  ? 'Asset ${factItem.facts.assetId}'
-                  : null;
-              final disciplineRaw = isEditing
-                  ? _discipline
-                  : factItem.facts.discipline;
-              final disciplineStr =
-                  (disciplineRaw != null && disciplineRaw.isNotEmpty)
-                  ? disciplineRaw[0].toUpperCase() + disciplineRaw.substring(1)
-                  : null;
-              final isBlockedOrDelayed =
-                  statusValue == 'blocked' || statusValue == 'delayed';
-              final reasonStr = isBlockedOrDelayed
-                  ? 'Reason · ${_formatReason(isEditing ? _reason.text : factItem.facts.delayReason)}'
-                  : null;
-
-              return Container(
-                margin: const EdgeInsets.only(bottom: 12),
-                decoration: BoxDecoration(
-                  color: FieldColors.surface,
-                  borderRadius: BorderRadius.circular(FieldRadius.card),
-                  border: Border.all(color: FieldColors.borderSubtle, width: 1),
-                ),
-                child: Padding(
-                  padding: const EdgeInsets.all(14),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      // Top header row: Checkbox + Status Badge + Event count & Time
-                      Row(
-                        children: [
-                          GestureDetector(
-                            onTap: () {
-                              setState(() {
-                                if (isSelectedForSubmit) {
-                                  _selectedEvents.remove(index);
-                                } else {
-                                  _selectedEvents.add(index);
-                                }
-                              });
-                              HapticFeedback.selectionClick();
-                            },
-                            child: AnimatedContainer(
-                              duration: FieldMotion.quick,
-                              width: 20,
-                              height: 20,
-                              margin: const EdgeInsets.only(right: 8),
-                              decoration: BoxDecoration(
-                                color: isSelectedForSubmit
-                                    ? FieldColors.action
-                                    : Colors.transparent,
-                                borderRadius: BorderRadius.circular(4),
-                                border: Border.all(
-                                  color: isSelectedForSubmit
-                                      ? FieldColors.action
-                                      : FieldColors.border,
-                                  width: 1.5,
-                                ),
-                              ),
-                              child: isSelectedForSubmit
-                                  ? const Icon(
-                                      Icons.check_rounded,
-                                      size: 14,
-                                      color: Colors.white,
-                                    )
-                                  : null,
-                            ),
-                          ),
-                          Flexible(
-                            child: StatusBadge(
-                              status: statusValue,
-                              isDense: true,
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          Flexible(
-                            child: Text(
-                              timeString != null
-                                  ? 'Event ${index + 1} of ${facts.length} · $timeString'
-                                  : 'Event ${index + 1} of ${facts.length}',
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              textAlign: TextAlign.right,
-                              style: FieldTypography.monoSm.copyWith(
-                                fontSize: 11,
-                                fontWeight: timeString != null
-                                    ? FontWeight.w600
-                                    : FontWeight.w400,
-                                color: timeString != null
-                                    ? FieldColors.textSecondary
-                                    : FieldColors.textTertiary,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 8),
-
-                      // Extracted event/activity title
-                      Text(
-                        displayTitle,
-                        style: FieldTypography.cardTitle.copyWith(
-                          fontSize: 14,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                      const SizedBox(height: 6),
-
-                      // Key operational metadata
-                      if (!isBlockedOrDelayed) ...[
-                        Text(
-                          [assetStr, disciplineStr].join(' · '),
-                          style: FieldTypography.metadata.copyWith(
-                            fontSize: 12,
-                            color: FieldColors.textSecondary,
-                          ),
-                        ),
-                      ] else ...[
-                        if (assetStr != null)
-                          Text(
-                            assetStr,
-                            style: FieldTypography.metadata.copyWith(
-                              fontSize: 12,
-                              color: FieldColors.textSecondary,
-                            ),
-                          ),
-                        if (reasonStr != null) ...[
-                          const SizedBox(height: 2),
-                          Text(
-                            reasonStr,
-                            style: FieldTypography.metadata.copyWith(
-                              fontSize: 12,
-                              color: FieldColors.textSecondary,
-                            ),
-                          ),
-                        ],
-                      ],
-
-                      // Suggested Schedule Activity (Subordinate matching panel)
-                      if (factItem.suggestedActivityId != null) ...[
-                        const SizedBox(height: 10),
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 10,
-                            vertical: 8,
-                          ),
-                          decoration: BoxDecoration(
-                            color: FieldColors.surface,
-                            borderRadius: BorderRadius.circular(
-                              FieldRadius.control,
-                            ),
-                            border: Border.all(color: FieldColors.borderSubtle, width: 1),
-                          ),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Wrap(
-                                alignment: WrapAlignment.spaceBetween,
-                                crossAxisAlignment: WrapCrossAlignment.center,
-                                spacing: 8,
-                                runSpacing: 4,
-                                children: [
-                                  Text(
-                                    'SUGGESTED SCHEDULE ACTIVITY',
-                                    style: FieldTypography.statusText.copyWith(
-                                      color: FieldColors.textTertiary,
-                                      fontSize: 9.5,
-                                      letterSpacing: 0.5,
-                                    ),
-                                  ),
-                                  ConfidenceBadge(
-                                    score: factItem.confidenceScore,
-                                    band: factItem.matchBand,
-                                  ),
-                                ],
-                              ),
-                              const SizedBox(height: 4),
-                              Text(
-                                '${factItem.suggestedActivityId} · ${factItem.suggestedActivityName}',
-                                style: FieldTypography.cardTitle.copyWith(
-                                  fontSize: 13,
-                                ),
-                              ),
-                              const SizedBox(height: 6),
-                              if (_acceptedFacts.contains(index))
-                                Row(
-                                  children: [
-                                    Icon(
-                                      Icons.check_circle_rounded,
-                                      size: 14,
-                                      color: FieldColors.success,
-                                    ),
-                                    const SizedBox(width: 4),
-                                    Expanded(
-                                      child: Text(
-                                        'Match accepted',
-                                        maxLines: 1,
-                                        overflow: TextOverflow.ellipsis,
-                                        style: FieldTypography.metadataMedium
-                                            .copyWith(
-                                              color: FieldColors.success,
-                                            ),
-                                      ),
-                                    ),
-                                    TextButton(
-                                      onPressed: () => _changeMatch(index),
-                                      style: TextButton.styleFrom(
-                                        visualDensity: VisualDensity.compact,
-                                        padding: const EdgeInsets.symmetric(
-                                          horizontal: 8,
-                                        ),
-                                      ),
-                                      child: const Text(
-                                        'Change',
-                                        style: TextStyle(
-                                          color: FieldColors.action,
-                                        ),
-                                      ),
-                                    ),
-                                  ],
-                                )
-                              else
-                                Wrap(
-                                  alignment: WrapAlignment.end,
-                                  crossAxisAlignment: WrapCrossAlignment.center,
-                                  spacing: 4,
-                                  runSpacing: 4,
-                                  children: [
-                                    FieldSubtleButton(
-                                      text: 'Accept match',
-                                      icon: Icons.link_rounded,
-                                      height: 30,
-                                      onPressed: () => _acceptMatch(index),
-                                    ),
-                                    TextButton(
-                                      onPressed: () => _changeMatch(index),
-                                      style: TextButton.styleFrom(
-                                        visualDensity: VisualDensity.compact,
-                                        padding: const EdgeInsets.symmetric(
-                                          horizontal: 8,
-                                        ),
-                                      ),
-                                      child: const Text(
-                                        'Change',
-                                        style: TextStyle(
-                                          color: FieldColors.action,
-                                        ),
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                            ],
-                          ),
-                        ),
-                      ],
-
-                      // Progressive Disclosure: compact → expanded edit
-                      if (!isEditing)
-                        Align(
-                          alignment: Alignment.centerRight,
-                          child: Padding(
-                            padding: const EdgeInsets.only(top: 6),
-                            child: TextButton.icon(
-                              onPressed: () => _editEvent(index),
-                              icon: const Icon(Icons.edit_outlined, size: 14),
-                              label: const Text('Edit event'),
-                              style: TextButton.styleFrom(
-                                foregroundColor: FieldColors.action,
-                                visualDensity: VisualDensity.compact,
-                              ),
-                            ),
-                          ),
-                        )
-                      else ...[
-                        const Divider(height: 20),
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            Text(
-                              'Edit Event Details',
-                              style: FieldTypography.cardTitle.copyWith(
-                                fontSize: 13,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                            TextButton.icon(
-                              onPressed: _doneEditing,
-                              icon: const Icon(Icons.check_rounded, size: 15),
-                              label: const Text('Done editing'),
-                              style: TextButton.styleFrom(
-                                foregroundColor: FieldColors.success,
-                                visualDensity: VisualDensity.compact,
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 8),
-                        Wrap(
-                          spacing: 6,
-                          runSpacing: 6,
-                          children: [
-                            _statusChip(
-                              'started',
-                              'Started',
-                              Icons.play_arrow_rounded,
-                            ),
-                            _statusChip(
-                              'progress',
-                              'In Progress',
-                              Icons.trending_up_rounded,
-                            ),
-                            _statusChip(
-                              'completed',
-                              'Completed',
-                              Icons.check_circle_outline_rounded,
-                            ),
-                            _statusChip(
-                              'delayed',
-                              'Delayed',
-                              Icons.schedule_rounded,
-                            ),
-                            _statusChip(
-                              'blocked',
-                              'Blocked',
-                              Icons.block_rounded,
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 10),
-                        TextField(
-                          controller: _description,
-                          minLines: 1,
-                          maxLines: 2,
-                          textInputAction: TextInputAction.next,
-                          decoration: const InputDecoration(
-                            labelText: 'Activity description',
-                          ),
-                          onChanged: (_) => setState(() {}),
-                        ),
-                        const SizedBox(height: 10),
-                        TextField(
-                          controller: _asset,
-                          textInputAction: TextInputAction.next,
-                          decoration: const InputDecoration(
-                            labelText: 'Asset / tag',
-                          ),
-                          onChanged: (_) => setState(() {}),
-                        ),
-                        const SizedBox(height: 10),
-                        DropdownButtonFormField<String>(
-                          key: ValueKey(_discipline),
-                          initialValue: _discipline,
-                          isExpanded: true,
-                          decoration: const InputDecoration(
-                            labelText: 'Discipline',
-                          ),
-                          items:
-                              const [
-                                    'mechanical',
-                                    'piping',
-                                    'structural',
-                                    'electrical',
-                                    'civil',
-                                    'instrumentation',
-                                  ]
-                                  .map(
-                                    (value) => DropdownMenuItem(
-                                      value: value,
-                                      child: Text(
-                                        value[0].toUpperCase() +
-                                            value.substring(1),
-                                        overflow: TextOverflow.ellipsis,
-                                      ),
-                                    ),
-                                  )
-                                  .toList(),
-                          onChanged: (value) {
-                            if (value != null) {
-                              setState(() => _discipline = value);
-                            }
-                          },
-                        ),
-                        if (statusValue == 'blocked' ||
-                            statusValue == 'delayed') ...[
-                          const SizedBox(height: 10),
-                          TextField(
-                            controller: _reason,
-                            minLines: 1,
-                            maxLines: 2,
-                            textInputAction: TextInputAction.done,
-                            decoration: InputDecoration(
-                              labelText: statusValue == 'blocked'
-                                  ? 'Blocker reason'
-                                  : 'Delay reason',
-                            ),
-                            onChanged: (_) => setState(() {}),
-                          ),
-                        ],
-                        const SizedBox(height: 8),
-                        Align(
-                          alignment: Alignment.centerLeft,
-                          child: TextButton(
-                            onPressed: _submitting
-                                ? null
-                                : () => _submitSingle(index),
-                            style: TextButton.styleFrom(
-                              visualDensity: VisualDensity.compact,
-                              padding: EdgeInsets.zero,
-                            ),
-                            child: const Text(
-                              'Submit only this update',
-                              style: TextStyle(
-                                fontSize: 12,
-                                color: FieldColors.action,
-                              ),
-                            ),
-                          ),
-                        ),
-                      ],
-                    ],
-                  ),
-                ),
-              );
-            }),
-
-            const SizedBox(height: 12),
+  void _showSubmissionDialog(List<ExecutionEvent> events) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        title: Row(
+          children: [
+            const Icon(Icons.check_circle, color: AppColors.success, size: 24),
+            const SizedBox(width: 8),
             Text(
-              'Evidence',
-              style: FieldTypography.sectionTitle.copyWith(fontSize: 18),
-            ),
-            const SizedBox(height: 6),
-            EvidenceAttachmentField(
-              attachments: _attachments,
-              onChanged: (attachments) =>
-                  setState(() => _attachments = attachments),
-              compact: true,
+              events.length > 1
+                  ? '${events.length} Proposals Submitted'
+                  : 'Proposal Submitted',
             ),
           ],
-        ],
-      ),
-      bottomNavigationBar: fact == null
-          ? null
-          : SafeArea(
-              top: false,
-              child: Container(
-                padding: const EdgeInsets.fromLTRB(16, 10, 16, 12),
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              '${events.length} ExecutionEvent proposal(s) queued for planner verification.',
+              style: AppTypography.bodyMdBold,
+            ),
+            const SizedBox(height: 10),
+            ...events.map(
+              (ev) => Container(
+                margin: const EdgeInsets.only(bottom: 6),
+                padding: const EdgeInsets.all(8),
                 decoration: BoxDecoration(
-                  color: FieldColors.surface,
-                  border: Border(top: BorderSide(color: FieldColors.borderSubtle)),
+                  color: AppColors.surfaceMuted,
+                  borderRadius: BorderRadius.circular(6),
                 ),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
+                child: Row(
                   children: [
-                    Padding(
-                      padding: const EdgeInsets.only(bottom: 6),
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          Text(
-                            _selectedEvents.length == facts.length
-                                ? '${facts.length} event${facts.length == 1 ? '' : 's'} ready'
-                                : '${_selectedEvents.length} of ${facts.length} selected',
-                            style: FieldTypography.metadataMedium.copyWith(
-                              color: FieldColors.textSecondary,
-                            ),
-                          ),
-                          if (_selectedEvents.length < facts.length)
-                            GestureDetector(
-                              onTap: () {
-                                setState(() {
-                                  for (var i = 0; i < facts.length; i++) {
-                                    _selectedEvents.add(i);
-                                  }
-                                });
-                              },
-                              child: Text(
-                                'Select all',
-                                style: FieldTypography.metadataMedium.copyWith(
-                                  fontWeight: FontWeight.w600,
-                                  color: FieldColors.action,
-                                ),
-                              ),
-                            ),
-                        ],
+                    Text(
+                      ev.id,
+                      style: AppTypography.monoSm.copyWith(
+                        fontWeight: FontWeight.w600,
                       ),
                     ),
-                    FieldPrimaryButton(
-                      text: _submitting
-                          ? 'Submitting…'
-                          : _selectedEvents.isEmpty
-                          ? 'Select updates to submit'
-                          : 'Submit ${_selectedEvents.length} update${_selectedEvents.length == 1 ? '' : 's'}',
-                      icon: Icons.send_rounded,
-                      isLoading: _submitting,
-                      onPressed: (_submitting || _selectedEvents.isEmpty)
-                          ? null
-                          : () => _submit(),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        ev.evidence.text,
+                        style: AppTypography.bodySm,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
                     ),
                   ],
                 ),
               ),
             ),
+            const SizedBox(height: 10),
+            Text(
+              'Rule reminder: Field submits event proposals only. Baseline actuals update upon authorized planner verification.',
+              style: AppTypography.bodySm.copyWith(
+                color: AppColors.textMuted,
+                fontSize: 11,
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () {
+              Navigator.of(ctx).pop();
+              context.go('/history');
+            },
+            child: const Text('View History'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.of(ctx).pop();
+              _applyTranscript('');
+              context.go('/');
+            },
+            child: const Text('Done'),
+          ),
+        ],
+      ),
     );
   }
 
-  Widget _exampleChip(
-    String category,
-    String exampleText,
-  ) {
-    return Material(
-      color: FieldColors.surface,
-      borderRadius: BorderRadius.circular(FieldRadius.badge),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(FieldRadius.badge),
-        onTap: () {
-          setState(() {
-            _transcript.text = exampleText;
-          });
-          HapticFeedback.selectionClick();
-        },
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(FieldRadius.badge),
-            border: Border.all(color: FieldColors.borderSubtle),
-          ),
-          child: Text(
-            category,
-            style: FieldTypography.metadata.copyWith(
-              fontSize: 10.5,
-              fontWeight: FontWeight.w600,
-              color: FieldColors.textSecondary,
-            ),
-          ),
+  @override
+  Widget build(BuildContext context) {
+    final state = ref.watch(timeAgentProvider);
+    final ext = state.extraction;
+    final multiFacts = state.multiFacts;
+    final selectedIdx = state.selectedFactIndex;
+
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Time Agent Capture'),
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back),
+          onPressed: () => context.go('/'),
         ),
       ),
+      body: ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          // 1. Microphone & Voice Capture Card
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(
+                        'SPEECH / TRANSCRIPT INPUT',
+                        style: AppTypography.bodySmBold.copyWith(
+                          letterSpacing: 0.5,
+                          color: AppColors.textMuted,
+                        ),
+                      ),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 6,
+                          vertical: 2,
+                        ),
+                        decoration: BoxDecoration(
+                          color: AppColors.actionBg,
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                        child: Text(
+                          'Multi-Fact Engine',
+                          style: AppTypography.monoSm.copyWith(
+                            fontSize: 10,
+                            color: AppColors.action,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      GestureDetector(
+                        onTap: _simulateVoiceCapture,
+                        child: AnimatedBuilder(
+                          animation: _pulseController,
+                          builder: (context, child) {
+                            return Container(
+                              width: 56,
+                              height: 56,
+                              decoration: BoxDecoration(
+                                shape: BoxShape.circle,
+                                color: _isListening
+                                    ? AppColors.danger
+                                    : AppColors.action,
+                                boxShadow: _isListening
+                                    ? [
+                                        BoxShadow(
+                                          color: AppColors.danger.withValues(
+                                            alpha: 0.4,
+                                          ),
+                                          blurRadius:
+                                              10 + 10 * _pulseController.value,
+                                          spreadRadius:
+                                              2 + 4 * _pulseController.value,
+                                        ),
+                                      ]
+                                    : [],
+                              ),
+                              child: Icon(
+                                _isListening ? Icons.mic : Icons.mic_none,
+                                color: Colors.white,
+                                size: 28,
+                              ),
+                            );
+                          },
+                        ),
+                      ),
+                      const SizedBox(width: 14),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              _isListening
+                                  ? 'Listening to site audio...'
+                                  : 'Tap mic or type update below',
+                              style: AppTypography.bodyMdBold,
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              'Handles compound multi-sentence updates seamlessly.',
+                              style: AppTypography.bodySm,
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 14),
+                  TextField(
+                    controller: _transcriptController,
+                    maxLines: 3,
+                    style: AppTypography.bodyMd,
+                    decoration: const InputDecoration(
+                      labelText: 'Site Audio Transcript / Multi-Fact Note',
+                      hintText: 'Speak or type what happened on site...',
+                    ),
+                    onChanged: (text) => _applyTranscript(text),
+                  ),
+                  const SizedBox(height: 10),
+
+                  // Quick test scenario chips
+                  Text(
+                    'Quick Test Scenarios (Tap to load):',
+                    style: AppTypography.bodySmBold.copyWith(fontSize: 11),
+                  ),
+                  const SizedBox(height: 6),
+                  Wrap(
+                    spacing: 6,
+                    runSpacing: 6,
+                    children: [
+                      ActionChip(
+                        avatar: const Icon(
+                          Icons.star,
+                          size: 14,
+                          color: AppColors.action,
+                        ),
+                        label: const Text(
+                          'P-110 Erection + Hydrotest Blocker (Multi-Fact)',
+                        ),
+                        onPressed: () => _applyTranscript(goldenP110Prompt),
+                      ),
+                      ActionChip(
+                        avatar: const Icon(
+                          Icons.construction,
+                          size: 14,
+                          color: AppColors.info,
+                        ),
+                        label: const Text('Pier P12 Rebar (Flow 1)'),
+                        onPressed: () => _applyTranscript(goldenP12RebarPrompt),
+                      ),
+                      ActionChip(
+                        avatar: const Icon(
+                          Icons.help_outline,
+                          size: 14,
+                          color: AppColors.warning,
+                        ),
+                        label: const Text('P12 Ambiguous (Flow 2)'),
+                        onPressed: () => _applyTranscript(demoAmbiguousPrompt),
+                      ),
+                      ActionChip(
+                        avatar: const Icon(
+                          Icons.clear,
+                          size: 14,
+                          color: AppColors.danger,
+                        ),
+                        label: const Text('Unmatched Drain (Flow 3)'),
+                        onPressed: () => _applyTranscript(demoUnmatchedPrompt),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 16),
+
+          // 2. Structured Preview & Multi-Fact Selector
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(
+                        'STRUCTURED PREVIEW & EDIT',
+                        style: AppTypography.bodySmBold.copyWith(
+                          letterSpacing: 0.5,
+                          color: AppColors.textMuted,
+                        ),
+                      ),
+                      if (ext != null)
+                        ConfidenceBadge(
+                          score: ext.confidenceScore,
+                          band: ext.matchBand,
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+
+                  // Multi-Fact selector tabs if > 1 fact extracted
+                  if (multiFacts.length > 1) ...[
+                    Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: AppColors.surfaceMuted,
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              const Icon(
+                                Icons.auto_awesome,
+                                size: 14,
+                                color: AppColors.action,
+                              ),
+                              const SizedBox(width: 6),
+                              Text(
+                                '${multiFacts.length} DISTINCT FACTS DETECTED — SELECT TO INSPECT/EDIT:',
+                                style: AppTypography.bodySmBold.copyWith(
+                                  fontSize: 10,
+                                  color: AppColors.action,
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 6),
+                          Row(
+                            children: multiFacts.asMap().entries.map((entry) {
+                              final idx = entry.key;
+                              final fact = entry.value;
+                              final isSelected = idx == selectedIdx;
+
+                              return Expanded(
+                                child: Padding(
+                                  padding: EdgeInsets.only(
+                                    right: idx < multiFacts.length - 1 ? 6 : 0,
+                                  ),
+                                  child: InkWell(
+                                    onTap: () => _selectFact(idx),
+                                    borderRadius: BorderRadius.circular(6),
+                                    child: Container(
+                                      padding: const EdgeInsets.symmetric(
+                                        vertical: 8,
+                                        horizontal: 8,
+                                      ),
+                                      decoration: BoxDecoration(
+                                        color: isSelected
+                                            ? AppColors.action
+                                            : Colors.white,
+                                        borderRadius: BorderRadius.circular(6),
+                                        border: Border.all(
+                                          color: isSelected
+                                              ? AppColors.action
+                                              : AppColors.border,
+                                        ),
+                                      ),
+                                      child: Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: [
+                                          Text(
+                                            'Fact ${idx + 1}: ${fact.eventType.toUpperCase()}',
+                                            style: AppTypography.monoSm
+                                                .copyWith(
+                                                  fontSize: 10,
+                                                  color: isSelected
+                                                      ? Colors.white
+                                                      : AppColors.action,
+                                                  fontWeight: FontWeight.bold,
+                                                ),
+                                          ),
+                                          const SizedBox(height: 2),
+                                          Text(
+                                            fact.description,
+                                            style: AppTypography.bodySm
+                                                .copyWith(
+                                                  fontSize: 11,
+                                                  color: isSelected
+                                                      ? Colors.white
+                                                      : AppColors.text,
+                                                ),
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              );
+                            }).toList(),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                  ],
+
+                  // Candidate preview alert
+                  if (ext?.suggestedActivityId != null) ...[
+                    Container(
+                      padding: const EdgeInsets.all(10),
+                      decoration: BoxDecoration(
+                        color: AppColors.actionBg,
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(
+                          color: AppColors.action.withValues(alpha: 0.3),
+                        ),
+                      ),
+                      child: Row(
+                        children: [
+                          const Icon(
+                            Icons.auto_awesome,
+                            color: AppColors.action,
+                            size: 18,
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  'Predicted Match: ${ext!.suggestedActivityId}',
+                                  style: AppTypography.bodySmBold.copyWith(
+                                    color: AppColors.action,
+                                  ),
+                                ),
+                                Text(
+                                  ext.suggestedActivityName ?? '',
+                                  style: AppTypography.bodySm.copyWith(
+                                    color: AppColors.text,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 14),
+                  ],
+
+                  // Fast Status Action Chips
+                  Text('Event Status Action:', style: AppTypography.bodySmBold),
+                  const SizedBox(height: 6),
+                  Wrap(
+                    spacing: 6,
+                    children: [
+                      _buildStatusChip(
+                        'started',
+                        'Started',
+                        Icons.play_arrow,
+                        AppColors.info,
+                      ),
+                      _buildStatusChip(
+                        'progress',
+                        'Progress',
+                        Icons.trending_up,
+                        AppColors.action,
+                      ),
+                      _buildStatusChip(
+                        'completed',
+                        'Completed',
+                        Icons.check,
+                        AppColors.success,
+                      ),
+                      _buildStatusChip(
+                        'delayed',
+                        'Delayed',
+                        Icons.timer,
+                        AppColors.warning,
+                      ),
+                      _buildStatusChip(
+                        'blocked',
+                        'Blocked',
+                        Icons.block,
+                        AppColors.danger,
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+
+                  TextField(
+                    controller: _descriptionController,
+                    decoration: const InputDecoration(
+                      labelText: 'Extracted Activity / Description',
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+
+                  Row(
+                    children: [
+                      Expanded(
+                        child: TextField(
+                          controller: _assetController,
+                          decoration: const InputDecoration(
+                            labelText: 'Asset / Tag',
+                            hintText: 'e.g. P-110, PIER-P12',
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: TextField(
+                          controller: _timeController,
+                          decoration: const InputDecoration(
+                            labelText: 'Observed Time',
+                            hintText: 'e.g. 10:35',
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+
+                  Row(
+                    children: [
+                      Expanded(
+                        child: DropdownButtonFormField<String>(
+                          initialValue: _selectedDiscipline,
+                          decoration: const InputDecoration(
+                            labelText: 'Discipline',
+                          ),
+                          items: const [
+                            DropdownMenuItem(
+                              value: 'mechanical',
+                              child: Text('Mechanical'),
+                            ),
+                            DropdownMenuItem(
+                              value: 'piping',
+                              child: Text('Piping'),
+                            ),
+                            DropdownMenuItem(
+                              value: 'structural',
+                              child: Text('Structural'),
+                            ),
+                            DropdownMenuItem(
+                              value: 'electrical',
+                              child: Text('Electrical'),
+                            ),
+                            DropdownMenuItem(
+                              value: 'civil',
+                              child: Text('Civil'),
+                            ),
+                            DropdownMenuItem(
+                              value: 'instrumentation',
+                              child: Text('Instrumentation'),
+                            ),
+                          ],
+                          onChanged: (val) {
+                            if (val != null)
+                              setState(() => _selectedDiscipline = val);
+                          },
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: TextField(
+                          controller: _quantityController,
+                          decoration: const InputDecoration(
+                            labelText: 'Quantity (Optional)',
+                            hintText: 'e.g. 3 t, 15 m',
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+
+                  TextField(
+                    controller: _delayReasonController,
+                    decoration: const InputDecoration(
+                      labelText: 'Delay / Blocker Reason (if applicable)',
+                      hintText: 'e.g. Permit delay, Access issue',
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+
+                  Row(
+                    children: [
+                      Checkbox(
+                        value: _includePhotoEvidence,
+                        activeColor: AppColors.action,
+                        onChanged: (val) => setState(
+                          () => _includePhotoEvidence = val ?? false,
+                        ),
+                      ),
+                      const Expanded(
+                        child: Text(
+                          'Attach audio transcript & site photo metadata',
+                          style: AppTypography.bodySm,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+
+                  // Submission Action Buttons
+                  if (multiFacts.length > 1) ...[
+                    SizedBox(
+                      width: double.infinity,
+                      height: 50,
+                      child: ElevatedButton.icon(
+                        icon: const Icon(Icons.done_all),
+                        label: Text(
+                          'SUBMIT ALL ${multiFacts.length} EXTRACTED FACTS',
+                        ),
+                        onPressed: _submitAllFacts,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    SizedBox(
+                      width: double.infinity,
+                      height: 42,
+                      child: OutlinedButton.icon(
+                        icon: const Icon(Icons.send),
+                        label: Text(
+                          'Submit Only Fact ${selectedIdx + 1} (${_selectedEventType.toUpperCase()})',
+                        ),
+                        onPressed: _descriptionController.text.trim().isEmpty
+                            ? null
+                            : _submitSingleProposal,
+                      ),
+                    ),
+                  ] else ...[
+                    SizedBox(
+                      width: double.infinity,
+                      height: 50,
+                      child: ElevatedButton.icon(
+                        icon: const Icon(Icons.send),
+                        label: const Text('SUBMIT EVENT PROPOSAL'),
+                        onPressed: _descriptionController.text.trim().isEmpty
+                            ? null
+                            : _submitSingleProposal,
+                      ),
+                    ),
+                  ],
+                  const SizedBox(height: 8),
+                  Center(
+                    child: Text(
+                      'Field submits proposals only. Baseline actuals update upon planner verification.',
+                      style: AppTypography.bodySm.copyWith(
+                        fontSize: 11,
+                        color: AppColors.textMuted,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 
-  Widget _statusChip(String value, String label, IconData icon) {
-    final selected = _eventType == value;
-    final Color selectedBg;
-    final Color selectedFg;
-    final Color selectedBorder;
-
-    switch (value) {
-      case 'completed':
-        selectedBg = FieldColors.successBg;
-        selectedFg = FieldColors.success;
-        selectedBorder = FieldColors.successBorder;
-        break;
-      case 'blocked':
-        selectedBg = FieldColors.dangerBg;
-        selectedFg = FieldColors.danger;
-        selectedBorder = FieldColors.dangerBorder;
-        break;
-      case 'delayed':
-        selectedBg = FieldColors.warningBg;
-        selectedFg = FieldColors.warning;
-        selectedBorder = FieldColors.warningBorder;
-        break;
-      case 'started':
-      case 'progress':
-      default:
-        selectedBg = FieldColors.actionBg;
-        selectedFg = FieldColors.action;
-        selectedBorder = FieldColors.actionBorder;
-        break;
-    }
-
+  Widget _buildStatusChip(
+    String type,
+    String label,
+    IconData icon,
+    Color color,
+  ) {
+    final isSelected = _selectedEventType == type;
     return ChoiceChip(
-      avatar: Icon(
-        icon,
-        size: 16,
-        color: selected ? selectedFg : FieldColors.textSecondary,
-      ),
+      avatar: Icon(icon, size: 14, color: isSelected ? Colors.white : color),
       label: Text(label),
-      selected: selected,
-      showCheckmark: false,
-      backgroundColor: FieldColors.surface,
-      selectedColor: selectedBg,
-      side: BorderSide(color: selected ? selectedBorder : FieldColors.border, width: 1),
-      labelStyle: FieldTypography.bodySmBold.copyWith(
-        fontSize: 12,
-        color: selected ? selectedFg : FieldColors.text,
+      selected: isSelected,
+      selectedColor: color,
+      labelStyle: AppTypography.bodySmBold.copyWith(
+        color: isSelected ? Colors.white : AppColors.text,
+        fontSize: 11,
       ),
-      onSelected: (_) => setState(() {
-        HapticFeedback.selectionClick();
-        _eventType = value;
-        if (value != 'blocked' && value != 'delayed') _reason.clear();
-      }),
+      onSelected: (sel) {
+        if (sel) setState(() => _selectedEventType = type);
+      },
     );
   }
 }

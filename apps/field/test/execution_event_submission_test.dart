@@ -21,7 +21,7 @@ void main() {
       () async {
         const event = ExecutionEvent(
           id: 'EVT-TEST-001',
-          projectId: 'PRJ-DEMO-001',
+          projectId: 'PRJ-METRO-001',
           reporterId: 'USR-SUP-001',
           observedAt: '2026-09-26T10:35:00Z',
           receivedAt: '2026-09-26T10:36:00Z',
@@ -66,7 +66,7 @@ void main() {
 
         final event = ExecutionEvent(
           id: 'EVT-OFFLINE-001',
-          projectId: 'PRJ-DEMO-001',
+          projectId: 'PRJ-METRO-001',
           reporterId: 'USR-SUP-001',
           observedAt: DateTime.now().toUtc().toIso8601String(),
           receivedAt: DateTime.now().toUtc().toIso8601String(),
@@ -108,7 +108,7 @@ void main() {
 
       const testEvent = ExecutionEvent(
         id: 'EVT-SQL-001',
-        projectId: 'PRJ-DEMO-001',
+        projectId: 'PRJ-METRO-001',
         reporterId: 'USR-SUP-001',
         observedAt: '2026-09-26T12:00:00Z',
         receivedAt: '2026-09-26T12:00:00Z',

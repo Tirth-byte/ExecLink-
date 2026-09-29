@@ -12,7 +12,6 @@ from .util import canonical
 DEMO = ROOT / "data" / "demo"
 TABLES = ("outbox_events", "audit_entries", "idempotency_records", "verifications", "match_proposals", "execution_events", "activities", "schedule_snapshots", "memberships", "users", "projects")
 
-
 def reset_demo(db: sqlite3.Connection) -> None:
     project_doc = json.loads((DEMO / "project.json").read_text())
     activities = json.loads((DEMO / "schedule-activities.json").read_text())
@@ -24,9 +23,23 @@ def reset_demo(db: sqlite3.Connection) -> None:
             db.execute(f"DELETE FROM {table}")
         project = project_doc["project"]
         db.execute("INSERT INTO projects VALUES(?,?,?,?,?)", (project["id"], project["name"], project["timezone"], project["activeSnapshotId"], project_doc["seedVersion"]))
+
+        from services.api.auth import hash_password
+        # The committed demo reset must reproduce byte-identical state. Runtime
+        # password creation still uses a cryptographically random salt.
+        pwd_hash = hash_password("Demo123!", salt="execlink-demo-v1")
+
         for user in project_doc["users"]:
-            db.execute("INSERT INTO users VALUES(?,?)", (user["id"], user["name"]))
-            db.execute("INSERT INTO memberships VALUES(?,?,?)", (project["id"], user["id"], user["role"]))
+            if user["id"] == "USR-DEMO-001": email = "admin@execlink.demo"
+            elif user["id"] == "USR-DEMO-002": email = "manager@execlink.demo"
+            elif user["id"] == "USR-DEMO-003": email = "planner@execlink.demo"
+            elif user["id"] == "USR-DEMO-004": email = "engineer@execlink.demo"
+            elif user["id"] == "USR-DEMO-005": email = "asha@execlink.demo"
+            else: email = "viewer@execlink.demo"
+            db.execute("INSERT INTO users(id, full_name, email, password_hash, active) VALUES(?,?,?,?,1)", (user["id"], user["name"], email, pwd_hash))
+            scope = "Area B · Civil & Structural" if user["id"] == "USR-DEMO-005" else None
+            db.execute("INSERT INTO memberships(project_id, user_id, role, active, reporting_scope) VALUES(?,?,?,1,?)", (project["id"], user["id"], user["role"], scope))
+
         db.execute("INSERT INTO schedule_snapshots VALUES(?,?,?,?)", (project["activeSnapshotId"], project["id"], "2026-09-26T00:00:00Z", source_hash))
         for item in activities:
             db.execute(
@@ -45,7 +58,6 @@ def reset_demo(db: sqlite3.Connection) -> None:
             )
             db.execute("UPDATE execution_events SET status='proposed' WHERE id=?", (item["executionEventId"],))
 
-
 def main() -> None:
     parser = argparse.ArgumentParser(description="Reset ExecLink's deterministic pre-verification demo database")
     parser.add_argument("--database", type=Path)
@@ -55,7 +67,6 @@ def main() -> None:
     initialise(db)
     reset_demo(db)
     print(f"Reset {args.seed_version} at {args.database or 'services/api/execlink.db'}")
-
 
 if __name__ == "__main__":
     main()
