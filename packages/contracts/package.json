@@ -1,0 +1,14 @@
+{
+  "name": "@execlink/contracts",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./canonical": "./src/canonical.ts",
+    "./dpr": "./src/dpr.ts",
+    "./reports": "./src/reports.ts",
+    "./schemas/*": "./schemas/*"
+  },
+  "files": ["src", "schemas"]
+}

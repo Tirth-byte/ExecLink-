@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://execlink.local/schemas/dpr-percent-complete.schema.json",
+  "title": "DprPercentComplete",
+  "description": "Daily Progress Report: the per-day planned-versus-verified record. Derived from verified actuals only; never an input to progress. Unrelated to the 'Discipline Progress' report type.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "projectId", "snapshotId", "reportDate", "status", "preparedBy", "lines", "preparedAt"],
+  "properties": {
+    "id": { "type": "string", "minLength": 1 },
+    "projectId": { "type": "string", "minLength": 1 },
+    "snapshotId": { "type": "string", "minLength": 1 },
+    "reportDate": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$",
+      "description": "The day being reported, in the project timezone."
+    },
+    "status": { "enum": ["draft", "submitted", "approved"] },
+    "preparedBy": { "type": "string", "minLength": 1 },
+    "preparedAt": { "type": "string", "format": "date-time" },
+    "submittedAt": { "type": ["string", "null"], "format": "date-time" },
+    "approvedBy": { "type": ["string", "null"] },
+    "approvedAt": { "type": ["string", "null"], "format": "date-time" },
+    "lines": { "type": "array", "items": { "$ref": "#/$defs/line" } }
+  },
+  "$defs": {
+    "quantity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["value", "unit"],
+      "properties": { "value": { "type": "number" }, "unit": { "type": "string", "minLength": 1 } }
+    },
+    "line": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["activityId", "wbs", "discipline", "workType", "assetId", "plannedStart", "plannedFinish", "plannedPercentAtReportDate", "actualPercentToDate", "variancePercent", "delayDays", "status", "evidenceEventIds", "lastVerifiedAt"],
+      "properties": {
+        "activityId": { "type": "string", "minLength": 1 },
+        "wbs": { "type": "string", "minLength": 1 },
+        "discipline": { "type": "string", "minLength": 1 },
+        "workType": { "type": "string", "minLength": 1 },
+        "assetId": { "type": "string", "minLength": 1 },
+        "plannedStart": { "type": "string", "format": "date" },
+        "plannedFinish": { "type": "string", "format": "date" },
+        "plannedPercentAtReportDate": { "type": "number", "minimum": 0, "maximum": 100 },
+        "actualPercentToDate": { "type": "number", "minimum": 0, "maximum": 100 },
+        "plannedQuantity": { "$ref": "#/$defs/quantity" },
+        "verifiedQuantityToDate": { "$ref": "#/$defs/quantity" },
+        "variancePercent": {
+          "type": "number",
+          "minimum": -100,
+          "maximum": 100,
+          "description": "actualPercentToDate minus plannedPercentAtReportDate. Negative is behind plan. Stored, not derived, so an exported DPR is a stable byte sequence."
+        },
+        "delayDays": { "type": "integer", "minimum": 0 },
+        "status": { "enum": ["not_started", "in_progress", "complete", "delayed"] },
+        "evidenceEventIds": { "type": "array", "items": { "type": "string" } },
+        "lastVerifiedAt": { "type": ["string", "null"], "format": "date-time" }
+      }
+    }
+  }
+}

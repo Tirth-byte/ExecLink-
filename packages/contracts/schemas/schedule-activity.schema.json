@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://execlink.local/schemas/schedule-activity.schema.json",
+  "title": "ScheduleActivity",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "projectId", "snapshotId", "wbs", "level", "name", "discipline", "workType", "assetId", "location", "plannedStart", "plannedFinish", "actualProgressPercent"],
+  "properties": {
+    "id": { "type": "string" }, "projectId": { "type": "string" }, "snapshotId": { "type": "string" }, "wbs": { "type": "string" }, "level": { "enum": [5, 6] }, "name": { "type": "string" }, "discipline": { "type": "string" }, "workType": { "type": "string" }, "assetId": { "type": "string" },
+    "location": { "$ref": "#/$defs/location" }, "plannedStart": { "type": "string", "format": "date" }, "plannedFinish": { "type": "string", "format": "date" }, "plannedQuantity": { "$ref": "#/$defs/quantity" }, "actualProgressPercent": { "type": "number", "minimum": 0, "maximum": 100 }
+  },
+  "$defs": {
+    "location": { "type": "object", "additionalProperties": false, "required": ["kind", "alignment", "start", "end", "unit"], "properties": { "kind": { "const": "chainage" }, "alignment": { "type": "string" }, "start": { "type": "number" }, "end": { "type": "number" }, "unit": { "enum": ["m", "km"] } } },
+    "quantity": { "type": "object", "additionalProperties": false, "required": ["value", "unit"], "properties": { "value": { "type": "number", "minimum": 0 }, "unit": { "type": "string", "minLength": 1 } } }
+  }
+}

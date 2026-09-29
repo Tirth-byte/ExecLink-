@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://execlink.local/schemas/activity-actual.schema.json",
+  "title": "ActivityActual",
+  "description": "Verified actual progress for one activity. Only match verification and planner correction write this row. A separate aggregate from match proposals on purpose: no cascade from a proposal may reach an actual.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "activityId",
+    "snapshotId",
+    "progressPercent",
+    "asOf",
+    "sourceVerificationId",
+    "version"
+  ],
+  "properties": {
+    "activityId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "snapshotId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "progressPercent": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 100
+    },
+    "actualQuantity": {
+      "$ref": "schedule-activity.schema.json#/$defs/quantity"
+    },
+    "asOf": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "sourceVerificationId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The Verification whose application produced this row. Null is never allowed here; an actual without provenance is a defect."
+    },
+    "version": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Optimistic concurrency. Clients send the version they read as expectedActivityVersion."
+    }
+  }
+}

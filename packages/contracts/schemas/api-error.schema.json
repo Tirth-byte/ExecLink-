@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://execlink.local/schemas/api-error.schema.json",
+  "title": "ApiError",
+  "description": "The single error envelope. 401 means the caller could not be identified; 403 means it was identified and is not permitted. Collapsing the two hides authorization bugs, so they stay distinct.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "error"
+  ],
+  "properties": {
+    "error": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "code",
+        "message",
+        "requestId"
+      ],
+      "properties": {
+        "code": {
+          "enum": [
+            "INVALID_USER",
+            "FORBIDDEN",
+            "NOT_FOUND",
+            "VALIDATION_FAILED",
+            "INVALID_TRANSITION",
+            "VERSION_CONFLICT",
+            "IDEMPOTENCY_CONFLICT",
+            "IDEMPOTENCY_IN_PROGRESS",
+            "UNSUPPORTED_MEDIA_TYPE",
+            "RATE_LIMITED",
+            "INTERNAL"
+          ]
+        },
+        "message": {
+          "type": "string"
+        },
+        "requestId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "details": {
+          "type": "object",
+          "description": "Field-level context for VALIDATION_FAILED. Never credentials."
+        }
+      }
+    }
+  }
+}

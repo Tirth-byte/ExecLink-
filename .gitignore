@@ -1,0 +1,25 @@
+node_modules/
+.DS_Store
+dist/
+.next/
+coverage/
+.env*
+!.env.example
+
+# Generated application artifacts
+.dart_tool/
+build/
+*.tsbuildinfo
+__pycache__/
+*.py[cod]
+.pytest_cache/
+*.db
+
+# Local multi-agent/runtime state
+hive/
+roster.json
+roster-backups/
+
+# One-off local migration/diagnostic helpers
+fix.py
+test_login.py

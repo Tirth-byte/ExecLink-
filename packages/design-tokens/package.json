@@ -1,0 +1,6 @@
+{
+  "name": "@execlink/design-tokens",
+  "version": "0.1.0",
+  "private": true,
+  "exports": { "./tokens.json": "./tokens.json", "./css": "./tokens.css" }
+}

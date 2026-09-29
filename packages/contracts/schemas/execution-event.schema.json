@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://execlink.local/schemas/execution-event.schema.json",
+  "title": "ExecutionEvent",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "projectId", "reporterId", "observedAt", "receivedAt", "evidence", "extractedFacts", "status"],
+  "properties": {
+    "id": { "type": "string", "minLength": 1 }, "projectId": { "type": "string", "minLength": 1 }, "reporterId": { "type": "string", "minLength": 1 },
+    "observedAt": { "type": "string", "format": "date-time" }, "receivedAt": { "type": "string", "format": "date-time" },
+    "status": { "enum": ["submitted", "proposed", "verified", "rejected"] },
+    "evidence": { "type": "object", "required": ["text", "attachmentIds"], "properties": { "text": { "type": "string" }, "transcript": { "type": "string" }, "attachmentIds": { "type": "array", "items": { "type": "string" } } } },
+    "extractedFacts": { "type": "object", "required": ["keywords"], "properties": { "assetId": { "type": "string" }, "discipline": { "type": "string" }, "workType": { "type": "string" }, "keywords": { "type": "array", "items": { "type": "string" }, "uniqueItems": true }, "location": { "$ref": "schedule-activity.schema.json#/$defs/location" }, "quantity": { "$ref": "schedule-activity.schema.json#/$defs/quantity" } } }
+  }
+}

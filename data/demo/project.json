@@ -1,0 +1,9 @@
+{
+  "seedVersion": "demo-v1",
+  "project": { "id": "PRJ-METRO-001", "name": "Blue Line Metro Extension", "timezone": "Asia/Kolkata", "activeSnapshotId": "SNP-DEMO-001" },
+  "users": [
+    { "id": "USR-SUP-001", "name": "Asha Rao", "role": "supervisor" },
+    { "id": "USR-PLN-001", "name": "Priya Shah", "role": "planner" },
+    { "id": "USR-VWR-001", "name": "Vikram Sen", "role": "viewer" }
+  ]
+}

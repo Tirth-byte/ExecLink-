@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://execlink.local/schemas/idempotency-record.schema.json",
+  "title": "IdempotencyRecord",
+  "description": "Persisted outcome of a command, keyed by (projectId, actorId, route, key). A replay with the same requestHash returns the stored status and body verbatim. A replay with a different requestHash is 409 IDEMPOTENCY_CONFLICT: the caller reused a key for a different command, which is a client bug and must never be answered with the first command's result.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "projectId",
+    "actorId",
+    "route",
+    "key",
+    "requestHash",
+    "responseStatus",
+    "createdAt"
+  ],
+  "properties": {
+    "projectId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "actorId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "route": {
+      "type": "string",
+      "description": "Resolved path, e.g. /projects/PRJ-1/proposals/MPR-1/verify."
+    },
+    "key": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 255
+    },
+    "requestHash": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "responseStatus": {
+      "type": "integer",
+      "minimum": 100,
+      "maximum": 599
+    },
+    "responseBody": {
+      "description": "Stored verbatim and replayed. Null while the command is still in flight."
+    },
+    "inFlight": {
+      "type": "boolean",
+      "description": "True until the command commits; a concurrent replay is 409 IDEMPOTENCY_IN_PROGRESS rather than a duplicate execution."
+    },
+    "createdAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "completedAt": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date-time"
+    }
+  }
+}

@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://execlink.local/schemas/realtime-message.schema.json",
+  "title": "RealtimeMessage",
+  "description": "An SSE frame on /projects/{projectId}/stream. Delivery is at-least-once, so every message carries a stable id for consumer-side deduplication. A consumer that treats these as exactly-once will double-count.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "id",
+    "type",
+    "occurredAt",
+    "contractVersion",
+    "data"
+  ],
+  "properties": {
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Stable across redelivery of the same outbox event."
+    },
+    "type": {
+      "enum": [
+        "event.submitted",
+        "proposal.created",
+        "proposal.verified",
+        "proposal.rejected",
+        "actual.updated",
+        "dpr.ready"
+      ]
+    },
+    "occurredAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "contractVersion": {
+      "type": "string",
+      "description": "Version of packages/contracts that produced data, so a consumer can detect a shape it predates."
+    },
+    "data": {
+      "type": "object"
+    }
+  }
+}

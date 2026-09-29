@@ -1,0 +1,87 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://execlink.local/schemas/audit-entry.schema.json",
+  "title": "AuditEntry",
+  "description": "One row of the append-only, tamper-evident chain. entryHash is SHA-256 over the UTF-8 bytes of the canonical JSON of every other member (see docs/ARCHITECTURE.md, 'Canonicalization and hashing'). previousHash is inside the hashed body: hashing without it would let a predecessor be rewritten undetected. Verify from persisted rows, never from an in-process copy.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "sequence",
+    "projectId",
+    "occurredAt",
+    "actorId",
+    "actorRole",
+    "action",
+    "entityType",
+    "entityId",
+    "requestId",
+    "payload",
+    "previousHash",
+    "entryHash"
+  ],
+  "properties": {
+    "sequence": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Contiguous from 1 per project. A gap is a deletion."
+    },
+    "projectId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "occurredAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "actorId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "actorRole": {
+      "enum": [
+        "supervisor",
+        "planner",
+        "viewer",
+        "admin",
+        "system"
+      ]
+    },
+    "action": {
+      "type": "string",
+      "pattern": "^[a-z]+\\.[a-z_]+$",
+      "description": "dotted lowercase, e.g. match.verified, match.rejected, actual.corrected."
+    },
+    "entityType": {
+      "enum": [
+        "project",
+        "activity",
+        "activity_actual",
+        "execution_event",
+        "match_proposal",
+        "verification",
+        "dpr",
+        "membership"
+      ]
+    },
+    "entityId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "requestId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "payload": {
+      "description": "Action-specific canonical JSON. Must not contain credentials or raw attachment bytes."
+    },
+    "previousHash": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "entryHash of sequence-1, or 64 zeros at sequence 1."
+    },
+    "entryHash": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    }
+  }
+}
