@@ -4,7 +4,6 @@ import base64
 import hashlib
 import hmac
 import json
-import sqlite3
 import time
 from dataclasses import dataclass
 
@@ -15,7 +14,7 @@ from .errors import ApiProblem
 
 import os
 
-from .db import connect
+from .db import DatabaseConnection, connect
 
 SECRET_KEY = os.environ.get("EXECLINK_JWT_SECRET", "hackathon-demo-secret-do-not-use-in-prod")
 
@@ -91,7 +90,7 @@ def authenticate(authorization: str | None = Header(default=None)) -> Principal:
         raise ApiProblem(401, "INVALID_USER", "Bearer token is invalid or expired")
 
 
-def membership(db: sqlite3.Connection, project_id: str, principal: Principal) -> dict:
+def membership(db: DatabaseConnection, project_id: str, principal: Principal) -> dict:
     row = db.execute("SELECT role, active, reporting_scope, discipline, area FROM memberships WHERE project_id=? AND user_id=?", (project_id, principal.user_id)).fetchone()
     if row and row["active"]:
         return dict(row)
@@ -141,7 +140,7 @@ def normalize_role(role: str) -> str:
     return mapping.get(role.lower(), role.upper())
 
 
-def require_permission(db: sqlite3.Connection, project_id: str, principal: Principal, permission: str) -> dict:
+def require_permission(db: DatabaseConnection, project_id: str, principal: Principal, permission: str) -> dict:
     mem = membership(db, project_id, principal)
     normalized = normalize_role(mem["role"])
     permissions = ROLE_PERMISSIONS.get(normalized, [])

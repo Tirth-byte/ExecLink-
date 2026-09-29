@@ -1,22 +1,22 @@
 from __future__ import annotations
 
-import sqlite3
 from typing import Any
 
 from .audit import append_entry
 from .auth import Principal, require_permission
+from .db import DatabaseConnection
 from .errors import ApiProblem, not_found
 from .idempotency import replay, store
 from .util import canonical, loads, new_id, now
 
 
-def verify_proposal(db: sqlite3.Connection, project_id: str, proposal_id: str, actor: Principal, key: str, command: dict[str, Any], request_id: str) -> tuple[int, dict[str, Any]]:
+def verify_proposal(db: DatabaseConnection, project_id: str, proposal_id: str, actor: Principal, key: str, command: dict[str, Any], request_id: str) -> tuple[int, dict[str, Any]]:
     require_permission(db, project_id, actor, "match.verify")
     route = f"/projects/{project_id}/proposals/{proposal_id}/verify"
     prior = replay(db, project_id, actor.user_id, route, key, command)
     if prior:
         return prior
-    proposal = db.execute("SELECT * FROM match_proposals WHERE id=? AND project_id=?", (proposal_id, project_id)).fetchone()
+    proposal = db.execute_for_update("SELECT * FROM match_proposals WHERE id=? AND project_id=?", (proposal_id, project_id)).fetchone()
     if not proposal:
         raise not_found("proposal", proposal_id)
     if proposal["status"] != "proposed":
@@ -25,7 +25,7 @@ def verify_proposal(db: sqlite3.Connection, project_id: str, proposal_id: str, a
     candidate_ids = {c["activityId"] for c in loads(proposal["candidates_json"])}
     if activity_id not in candidate_ids:
         raise ApiProblem(422, "INVALID_ACTIVITY", "Activity is not a proposal candidate")
-    activity = db.execute("SELECT * FROM activities WHERE id=? AND project_id=? AND snapshot_id=?", (activity_id, project_id, proposal["snapshot_id"])).fetchone()
+    activity = db.execute_for_update("SELECT * FROM activities WHERE id=? AND project_id=? AND snapshot_id=?", (activity_id, project_id, proposal["snapshot_id"])).fetchone()
     if not activity:
         raise ApiProblem(422, "INVALID_ACTIVITY", "Activity is outside the pinned project snapshot")
     progress = command.get("progressPercent")
@@ -55,13 +55,13 @@ def verify_proposal(db: sqlite3.Connection, project_id: str, proposal_id: str, a
     return 200, response
 
 
-def reject_proposal(db: sqlite3.Connection, project_id: str, proposal_id: str, actor: Principal, key: str, command: dict[str, Any], request_id: str) -> tuple[int, dict[str, Any]]:
+def reject_proposal(db: DatabaseConnection, project_id: str, proposal_id: str, actor: Principal, key: str, command: dict[str, Any], request_id: str) -> tuple[int, dict[str, Any]]:
     require_permission(db, project_id, actor, "match.verify")
     route = f"/projects/{project_id}/proposals/{proposal_id}/reject"
     prior = replay(db, project_id, actor.user_id, route, key, command)
     if prior:
         return prior
-    proposal = db.execute("SELECT * FROM match_proposals WHERE id=? AND project_id=?", (proposal_id, project_id)).fetchone()
+    proposal = db.execute_for_update("SELECT * FROM match_proposals WHERE id=? AND project_id=?", (proposal_id, project_id)).fetchone()
     if not proposal:
         raise not_found("proposal", proposal_id)
     if proposal["status"] != "proposed":

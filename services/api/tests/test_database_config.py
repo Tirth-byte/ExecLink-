@@ -3,7 +3,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from services.api.db import ROOT, database_path
+from services.api.db import ROOT, database_path, database_settings
 
 
 class DatabaseConfigTests(unittest.TestCase):
@@ -24,14 +24,15 @@ class DatabaseConfigTests(unittest.TestCase):
             os.environ.pop("DATABASE_URL", None)
             self.assertEqual(Path("/tmp/execlink-test.db"), database_path())
 
-    def test_postgresql_is_not_enabled_during_consolidation(self):
+    def test_postgresql_database_url_is_authoritative(self):
         with patch.dict(
             os.environ,
             {"DATABASE_URL": "postgresql://example.invalid/execlink"},
             clear=False,
         ):
-            with self.assertRaisesRegex(RuntimeError, "planned PostgreSQL migration"):
-                database_path()
+            settings = database_settings()
+            self.assertEqual("postgresql", settings.engine)
+            self.assertEqual("postgresql://example.invalid/execlink", settings.url)
 
 
 if __name__ == "__main__":

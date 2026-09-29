@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-import sqlite3
+import logging
 from contextlib import asynccontextmanager
 from typing import Any, AsyncIterator
 
@@ -13,7 +13,7 @@ from fastapi.responses import JSONResponse, PlainTextResponse, StreamingResponse
 
 from .audit import append_entry, verify_chain
 from .auth import Principal, authenticate, membership, require_permission, verify_password, create_jwt, normalize_role, ROLE_PERMISSIONS
-from .db import connect, initialise, transaction
+from .db import close_pool, connect, initialise, is_integrity_error, transaction
 from .errors import ApiProblem, not_found
 from .idempotency import replay, store
 from .reports import REPORT_TYPES, as_csv, build_report
@@ -21,11 +21,20 @@ from .serializers import activity, event, proposal
 from .util import canonical, new_id, now
 from .verification import reject_proposal, verify_proposal
 
+logger = logging.getLogger(__name__)
+
 
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
-    db = connect(); initialise(db); db.close()
-    yield
+    db = connect()
+    try:
+        initialise(db)
+    finally:
+        db.close()
+    try:
+        yield
+    finally:
+        close_pool()
 
 
 from fastapi.middleware.cors import CORSMiddleware
@@ -83,7 +92,7 @@ class LoginRequest(BaseModel):
 def login(request: LoginRequest):
     db = connect()
     try:
-        user = db.execute("SELECT * FROM users WHERE email=? AND active=1", (request.email,)).fetchone()
+        user = db.execute("SELECT * FROM users WHERE email=? AND active=TRUE", (request.email,)).fetchone()
         if not user or not user["password_hash"] or not verify_password(request.password, user["password_hash"]):
             raise ApiProblem(401, "UNAUTHORIZED", "Invalid email or password")
 
@@ -100,10 +109,10 @@ def login(request: LoginRequest):
 def get_me(principal: Principal = Depends(authenticate)):
     db = connect()
     try:
-        user = db.execute("SELECT * FROM users WHERE id=? AND active=1", (principal.user_id,)).fetchone()
+        user = db.execute("SELECT * FROM users WHERE id=? AND active=TRUE", (principal.user_id,)).fetchone()
         if not user:
             raise ApiProblem(401, "UNAUTHORIZED", "User not found")
-        members = db.execute("SELECT project_id, role, reporting_scope, discipline, area FROM memberships WHERE user_id=? AND active=1", (principal.user_id,)).fetchall()
+        members = db.execute("SELECT project_id, role, reporting_scope, discipline, area FROM memberships WHERE user_id=? AND active=TRUE", (principal.user_id,)).fetchall()
         projects = []
         for m in members:
             proj = db.execute("SELECT name FROM projects WHERE id=?", (m["project_id"],)).fetchone()
@@ -130,8 +139,18 @@ def get_me(principal: Principal = Depends(authenticate)):
 
 @app.get("/api/v1/health")
 
-def health() -> dict[str, str]:
-    return {"status": "ok"}
+def health() -> JSONResponse:
+    db = None
+    try:
+        db = connect()
+        db.execute("SELECT 1").fetchone()
+        return JSONResponse({"status": "ok", "database": "ok"})
+    except Exception:
+        logger.exception("Database health check failed")
+        return JSONResponse(status_code=503, content={"status": "degraded", "database": "unavailable"})
+    finally:
+        if db is not None:
+            db.close()
 
 
 @app.post("/api/v1/projects/{project_id}/events", status_code=201)
@@ -149,7 +168,9 @@ def create_event(project_id: str, body: dict[str, Any], request: Request, princi
             document = {"id": event_id, "projectId": project_id, "reporterId": principal.user_id, "observedAt": body.get("observedAt", timestamp), "receivedAt": timestamp, "evidence": body.get("evidence", {"text": "", "attachmentIds": []}), "extractedFacts": body.get("extractedFacts", {"keywords": []}), "status": "submitted"}
             try:
                 db.execute("INSERT INTO execution_events(id,project_id,reporter_id,observed_at,received_at,evidence_json,extracted_facts_json,status) VALUES(?,?,?,?,?,?,?,'submitted')", (event_id, project_id, principal.user_id, document["observedAt"], timestamp, canonical(document["evidence"]), canonical(document["extractedFacts"])))
-            except sqlite3.IntegrityError as exc:
+            except Exception as exc:
+                if not is_integrity_error(exc):
+                    raise
                 raise ApiProblem(409, "RESOURCE_CONFLICT", "Event identifier already exists") from exc
             append_entry(db, project_id=project_id, actor_id=principal.user_id, action="event.submitted", entity_type="ExecutionEvent", entity_id=event_id, occurred_at=timestamp, request_id=request.state.request_id, payload={"observedAt": document["observedAt"]})
             db.execute("INSERT INTO outbox_events VALUES(?,?,?,?,?,?,?,NULL)", (new_id("OBX"), project_id, "event", event_id, "event.submitted", canonical(document), timestamp))

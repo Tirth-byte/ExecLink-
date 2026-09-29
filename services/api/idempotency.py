@@ -1,14 +1,14 @@
 from __future__ import annotations
 
 import json
-import sqlite3
 from typing import Any
 
+from .db import DatabaseConnection
 from .errors import ApiProblem
 from .util import canonical, digest, now
 
 
-def replay(db: sqlite3.Connection, project_id: str, actor_id: str, route: str, key: str, body: Any) -> tuple[int, Any] | None:
+def replay(db: DatabaseConnection, project_id: str, actor_id: str, route: str, key: str, body: Any) -> tuple[int, Any] | None:
     row = db.execute(
         "SELECT request_hash,response_json,response_status FROM idempotency_records WHERE project_id=? AND actor_id=? AND route=? AND key=?",
         (project_id, actor_id, route, key),
@@ -20,7 +20,7 @@ def replay(db: sqlite3.Connection, project_id: str, actor_id: str, route: str, k
     return row["response_status"], json.loads(row["response_json"])
 
 
-def store(db: sqlite3.Connection, project_id: str, actor_id: str, route: str, key: str, body: Any, status: int, response: Any) -> None:
+def store(db: DatabaseConnection, project_id: str, actor_id: str, route: str, key: str, body: Any, status: int, response: Any) -> None:
     db.execute(
         "INSERT INTO idempotency_records VALUES(?,?,?,?,?,?,?,?)",
         (project_id, actor_id, route, key, digest(body), canonical(response), status, now()),

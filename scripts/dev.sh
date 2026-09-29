@@ -26,7 +26,11 @@ cd "$ROOT"
 export EXECLINK_JWT_SECRET="${EXECLINK_JWT_SECRET:-execlink-local-development-only}"
 
 echo "ExecLink API starting..."
-python3 -m services.api.verification_seed --seed-version demo-v1
+if python3 -c 'from services.api.db import database_settings; raise SystemExit(0 if database_settings().engine == "sqlite" else 1)'; then
+  python3 -m services.api.verification_seed --seed-version demo-v1
+else
+  echo "PostgreSQL configured; expecting explicit migrate/seed commands to be complete."
+fi
 python3 -m uvicorn services.api.main:app --host 0.0.0.0 --port "$PORT" &
 API_PID=$!
 

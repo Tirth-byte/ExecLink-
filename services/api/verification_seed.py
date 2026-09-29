@@ -3,25 +3,27 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import sqlite3
 from pathlib import Path
 
-from .db import ROOT, connect, initialise, transaction
+from .db import ROOT, DatabaseConnection, connect, initialise, transaction
 from .util import canonical
 
 DEMO = ROOT / "data" / "demo"
 TABLES = ("outbox_events", "audit_entries", "idempotency_records", "verifications", "match_proposals", "execution_events", "activities", "schedule_snapshots", "memberships", "users", "projects")
 
-def reset_demo(db: sqlite3.Connection) -> None:
+def _write_demo(db: DatabaseConnection, *, destructive: bool) -> bool:
     project_doc = json.loads((DEMO / "project.json").read_text())
     activities = json.loads((DEMO / "schedule-activities.json").read_text())
     events = json.loads((DEMO / "execution-events.json").read_text())
     proposals = json.loads((DEMO / "match-proposals.json").read_text())
     source_hash = hashlib.sha256(b"".join((DEMO / name).read_bytes() for name in ("project.json", "schedule-activities.json"))).hexdigest()
     with transaction(db):
-        for table in TABLES:
-            db.execute(f"DELETE FROM {table}")
         project = project_doc["project"]
+        if destructive:
+            for table in TABLES:
+                db.execute(f"DELETE FROM {table}")
+        elif db.execute("SELECT id FROM projects WHERE id=?", (project["id"],)).fetchone():
+            return False
         db.execute("INSERT INTO projects VALUES(?,?,?,?,?)", (project["id"], project["name"], project["timezone"], project["activeSnapshotId"], project_doc["seedVersion"]))
 
         from services.api.auth import hash_password
@@ -36,9 +38,9 @@ def reset_demo(db: sqlite3.Connection) -> None:
             elif user["id"] == "USR-DEMO-004": email = "engineer@execlink.demo"
             elif user["id"] == "USR-DEMO-005": email = "asha@execlink.demo"
             else: email = "viewer@execlink.demo"
-            db.execute("INSERT INTO users(id, full_name, email, password_hash, active) VALUES(?,?,?,?,1)", (user["id"], user["name"], email, pwd_hash))
+            db.execute("INSERT INTO users(id, full_name, email, password_hash, active) VALUES(?,?,?,?,TRUE)", (user["id"], user["name"], email, pwd_hash))
             scope = "Area B · Civil & Structural" if user["id"] == "USR-DEMO-005" else None
-            db.execute("INSERT INTO memberships(project_id, user_id, role, active, reporting_scope) VALUES(?,?,?,1,?)", (project["id"], user["id"], user["role"], scope))
+            db.execute("INSERT INTO memberships(project_id, user_id, role, active, reporting_scope) VALUES(?,?,?,TRUE,?)", (project["id"], user["id"], user["role"], scope))
 
         db.execute("INSERT INTO schedule_snapshots VALUES(?,?,?,?)", (project["activeSnapshotId"], project["id"], "2026-09-26T00:00:00Z", source_hash))
         for item in activities:
@@ -57,6 +59,18 @@ def reset_demo(db: sqlite3.Connection) -> None:
                 (item["id"], item["projectId"], item["executionEventId"], item["snapshotId"], item["engineVersion"], item["configVersion"], item["mode"], item["status"], canonical(item["candidates"]), item["createdAt"]),
             )
             db.execute("UPDATE execution_events SET status='proposed' WHERE id=?", (item["executionEventId"],))
+    return True
+
+
+def reset_demo(db: DatabaseConnection) -> None:
+    if db.engine != "sqlite":
+        raise RuntimeError("Destructive demo reset is restricted to SQLite.")
+    _write_demo(db, destructive=True)
+
+
+def seed_demo(db: DatabaseConnection) -> bool:
+    """Insert the deterministic demo once without deleting or overwriting data."""
+    return _write_demo(db, destructive=False)
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Reset ExecLink's deterministic pre-verification demo database")

@@ -1,8 +1,8 @@
 # ExecLink API
 
-FastAPI system of record for the deterministic golden slice. The local adapter
-uses SQLite from Python's standard library; `migrations/postgresql/001_initial.sql`
-is the production-compatible PostgreSQL schema.
+FastAPI system of record for the deterministic golden slice. SQLite remains the
+zero-configuration local default. A backend-only `postgresql://` `DATABASE_URL`
+selects PostgreSQL through the same synchronous repository contract.
 
 ## Run locally
 
@@ -48,8 +48,18 @@ python3 qa/run_checks.py
 
 Set `DATABASE_URL=sqlite:///path/to/demo.db` to isolate a database. The legacy
 `EXECLINK_DATABASE=/path/to/demo.db` remains available for existing local tests.
-PostgreSQL/Neon URLs are intentionally rejected until the planned persistence
-migration is implemented. Reports support
+For a new PostgreSQL/Neon database, install `requirements.txt`, export its URL
+without committing it, then run these repeatable commands in order:
+
+```bash
+python3 -m services.api.database_admin migrate
+python3 -m services.api.database_admin seed
+python3 -m services.api.database_admin verify
+```
+
+Migrations are tracked in `schema_migrations`; the production seed never deletes
+or overwrites rows and reports a no-op when the demo project already exists.
+Reports support
 `?format=json` and `?format=csv`; the only report types are
 `schedule-variance`, `verification-audit`, `match-quality`, `delay-register`,
 and `discipline-progress`.

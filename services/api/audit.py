@@ -2,19 +2,21 @@ from __future__ import annotations
 
 import hashlib
 import json
-import sqlite3
 from typing import Any
 
+from .db import DatabaseConnection, DatabaseRow
 from .util import canonical
 
 GENESIS_HASH = "0" * 64
 
 
 def append_entry(
-    db: sqlite3.Connection, *, project_id: str, actor_id: str, action: str,
+    db: DatabaseConnection, *, project_id: str, actor_id: str, action: str,
     entity_type: str, entity_id: str, occurred_at: str, request_id: str,
     payload: dict[str, Any],
 ) -> tuple[int, str]:
+    # PostgreSQL serializes each project's append-only chain on its project row.
+    db.lock_project(project_id)
     previous = db.execute(
         "SELECT sequence, entry_hash FROM audit_entries WHERE project_id=? ORDER BY sequence DESC LIMIT 1",
         (project_id,),
@@ -40,7 +42,7 @@ def append_entry(
     return sequence, entry_hash
 
 
-def verify_chain(db: sqlite3.Connection, project_id: str) -> dict[str, Any]:
+def verify_chain(db: DatabaseConnection, project_id: str) -> dict[str, Any]:
     rows = db.execute(
         "SELECT * FROM audit_entries WHERE project_id=? ORDER BY sequence", (project_id,)
     ).fetchall()
@@ -63,5 +65,5 @@ def verify_chain(db: sqlite3.Connection, project_id: str) -> dict[str, Any]:
     return {"valid": True, "entriesChecked": len(rows), "lastHash": expected_previous}
 
 
-def _invalid(row: sqlite3.Row, reason: str) -> dict[str, Any]:
+def _invalid(row: DatabaseRow, reason: str) -> dict[str, Any]:
     return {"valid": False, "entriesChecked": max(0, int(row["sequence"]) - 1), "failedSequence": row["sequence"], "reason": reason}

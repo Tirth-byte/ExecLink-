@@ -3,15 +3,16 @@ from __future__ import annotations
 import csv
 import io
 import json
-import sqlite3
 from collections import defaultdict
 from datetime import date
 from typing import Any
 
+from .db import DatabaseConnection
+
 REPORT_TYPES = {"schedule-variance", "verification-audit", "match-quality", "delay-register", "discipline-progress"}
 
 
-def build_report(db: sqlite3.Connection, project_id: str, report_type: str, report_date: str | None = None) -> list[dict[str, Any]]:
+def build_report(db: DatabaseConnection, project_id: str, report_type: str, report_date: str | None = None) -> list[dict[str, Any]]:
     ref_date = report_date or "2026-09-26"
 
     if report_type == "schedule-variance":
