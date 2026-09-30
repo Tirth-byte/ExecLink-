@@ -363,9 +363,14 @@ def list_events(
             ev = event(r)
             ev_id = r["id"]
             ev_rows = db.execute(
-                "SELECT e.* FROM evidence e JOIN event_evidence ee ON e.id=ee.evidence_id WHERE ee.execution_event_id=? AND e.project_id=?",
+                "SELECT e.* FROM evidence e JOIN event_evidence ee ON e.id=ee.evidence_id WHERE ee.execution_event_id=? AND e.project_id=? ORDER BY e.created_at ASC, e.id ASC",
                 (ev_id, project_id),
             ).fetchall()
+            if not ev_rows:
+                ev_rows = db.execute(
+                    "SELECT * FROM evidence WHERE (execution_event_id=? OR source_capture_id=?) AND project_id=? ORDER BY created_at ASC, id ASC",
+                    (ev_id, ev_id, project_id),
+                ).fetchall()
             if ev_rows:
                 ev["evidence"]["attachments"] = [evidence_item(er) for er in ev_rows]
                 ev["evidence"]["attachmentIds"] = [er["id"] for er in ev_rows]
@@ -518,9 +523,14 @@ def list_proposals(
             if evt_row:
                 ev = event(evt_row)
                 ev_rows = db.execute(
-                    "SELECT e.* FROM evidence e JOIN event_evidence ee ON e.id=ee.evidence_id WHERE ee.execution_event_id=? AND e.project_id=?",
+                    "SELECT e.* FROM evidence e JOIN event_evidence ee ON e.id=ee.evidence_id WHERE ee.execution_event_id=? AND e.project_id=? ORDER BY e.created_at ASC, e.id ASC",
                     (prop["executionEventId"], project_id),
                 ).fetchall()
+                if not ev_rows:
+                    ev_rows = db.execute(
+                        "SELECT * FROM evidence WHERE (execution_event_id=? OR source_capture_id=?) AND project_id=? ORDER BY created_at ASC, id ASC",
+                        (prop["executionEventId"], prop["executionEventId"], project_id),
+                    ).fetchall()
                 if ev_rows:
                     ev["evidence"]["attachments"] = [evidence_item(er) for er in ev_rows]
                     ev["evidence"]["attachmentIds"] = [er["id"] for er in ev_rows]
@@ -689,3 +699,27 @@ async def stream(project_id: str, principal: Principal=Depends(authenticate), la
                 yield f"id: {row['id']}\nevent: {row['type']}\ndata: {json.dumps(data,separators=(',',':'))}\n\n"
             if await asyncio.sleep(1,result=False): break
     return StreamingResponse(messages(),media_type="text/event-stream",headers={"Cache-Control":"no-cache"})
+
+
+@app.post("/api/v1/projects/{project_id}/admin/clean-test-data")
+def clean_test_data(project_id: str, principal: Principal = Depends(authenticate)):
+    db = connect()
+    initialise(db)
+    try:
+        membership(db, project_id, principal)
+        test_patterns = [
+            "EVT-TEST-%", "EVT-FIELD-%", "EVT-FLUTTER-%", "EVT-RENDER-%", "EVT-N-%", "EVT-DEMO-%"
+        ]
+        deleted_events = 0
+        for pat in test_patterns:
+            evts = db.execute("SELECT id FROM execution_events WHERE project_id=? AND id LIKE ?", (project_id, pat)).fetchall()
+            for e in evts:
+                eid = e["id"]
+                db.execute("DELETE FROM match_proposals WHERE project_id=? AND execution_event_id=?", (project_id, eid))
+                db.execute("DELETE FROM event_evidence WHERE execution_event_id=?", (eid,))
+                db.execute("DELETE FROM execution_events WHERE project_id=? AND id=?", (project_id, eid))
+                deleted_events += 1
+        return {"status": "ok", "deletedEvents": deleted_events}
+    finally:
+        db.close()
+
