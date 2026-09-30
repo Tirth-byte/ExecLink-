@@ -12,6 +12,7 @@ import {
   FileText,
   Camera,
   Video,
+  Play,
   AlertTriangle,
   Info,
   ShieldAlert,
@@ -41,9 +42,9 @@ function mapProposalToMatchReviewItem(prop: any): MatchReviewItem | null {
     id: c.activityId || c.id || "ACT-GEN",
     name: c.activityName || c.name || "Identified Activity",
     discipline: (c.discipline || "Piping") as ExecutionDiscipline,
-    wbs: c.wbsPath || c.wbs || "Process Area",
-    confidence: Math.round(c.confidence ?? c.score ?? 85),
-    confidenceTier: (c.confidenceTier || ((c.confidence ?? c.score ?? 85) >= 85 ? "High" : (c.confidence ?? c.score ?? 85) >= 60 ? "Review" : "Weak")) as "High" | "Review" | "Weak",
+    wbs: c.wbsPath || c.activityWbs || c.wbs || "Process Area",
+    confidence: Math.round(c.confidence ?? (c.score ? c.score * 100 : 85)),
+    confidenceTier: (c.confidenceTier || (c.band === "auto_suggest" || (c.confidence ?? (c.score ? c.score * 100 : 85)) >= 85 ? "High" : (c.confidence ?? (c.score ? c.score * 100 : 85)) >= 60 ? "Review" : "Weak")) as "High" | "Review" | "Weak",
     baselineStart: c.baselineStart || "18 Sep 2026",
     baselineFinish: c.baselineFinish || "28 Sep 2026",
     currentProgress: c.currentProgressPercent ?? c.currentProgress ?? 0,
@@ -88,23 +89,31 @@ function mapProposalToMatchReviewItem(prop: any): MatchReviewItem | null {
   const primaryCandidate = candidates[0];
   const alternatives = candidates.slice(1);
 
-  const attachments = ev.evidence?.attachments || [];
-  const firstAttachment = attachments[0];
-  let imageUrl: string | undefined = undefined;
-  let videoUrl: string | undefined = undefined;
-
-  if (firstAttachment) {
-    let mediaUrl = firstAttachment.mediaUrl || "";
+  const rawAttachments = ev.evidence?.attachments || [];
+  const attachments = rawAttachments.map((att: any) => {
+    let mediaUrl = att.mediaUrl || att.url || "";
     if (mediaUrl.startsWith("/api/v1")) {
       const apiHost = API_BASE_URL.replace(/\/api\/v1\/?$/, "");
       mediaUrl = `${apiHost}${mediaUrl}`;
     }
-    if (firstAttachment.type === "video") {
-      videoUrl = mediaUrl;
-    } else {
-      imageUrl = mediaUrl;
-    }
-  }
+    const type = att.type || (att.mimeType?.startsWith("video/") || att.fileName?.match(/\.(mp4|mov|webm)$/i) ? "video" : "photo");
+    return {
+      id: att.id || att.fileName || Math.random().toString(),
+      type,
+      mimeType: att.mimeType,
+      fileName: att.fileName || "attachment",
+      fileSize: att.fileSize,
+      capturedAt: att.capturedAt,
+      mediaUrl,
+    };
+  });
+
+  const photoAttachment = attachments.find((a: any) => a.type === "photo");
+  const videoAttachment = attachments.find((a: any) => a.type === "video");
+  const firstAttachment = attachments[0];
+
+  const imageUrl = photoAttachment?.mediaUrl || (firstAttachment?.type !== "video" ? firstAttachment?.mediaUrl : undefined);
+  const videoUrl = videoAttachment?.mediaUrl;
 
   const evText = ev.evidence?.text || "Field progress update reported by on-site supervisor.";
   const facts = ev.extractedFacts || {};
@@ -135,13 +144,14 @@ function mapProposalToMatchReviewItem(prop: any): MatchReviewItem | null {
     evidence: {
       type: (firstAttachment?.type || (attachments.length > 0 ? "photo" : "transcript")) as any,
       count: `${attachments.length} attachment${attachments.length === 1 ? "" : "s"}`,
-      reference: firstAttachment?.fileName || firstAttachment?.id || "Direct Field Update",
+      reference: firstAttachment?.fileName || (attachments.length > 0 ? "Field Attachments" : "Direct Field Update"),
       reporter: ev.reporterId || "Asha Rao · Field Supervisor",
       timestamp: firstAttachment?.capturedAt || ev.observedAt || "Today",
       summary: evText,
       imageUrl,
       videoUrl,
       aiObservation: "Field evidence captured on mobile device and verified against schedule activity metadata.",
+      attachments,
     },
     recommendedCandidate: primaryCandidate,
     alternativeCandidates: alternatives,
@@ -167,6 +177,7 @@ export function MatchReviewWorkspace({
     "All" | "High Priority" | "Low Confidence" | "Ambiguous" | "Unmatched"
   >("All");
   const [currentIndex, setCurrentIndex] = useState(0);
+  const [selectedAttachmentIndex, setSelectedAttachmentIndex] = useState(0);
   const [selectedCandidateOverrides, setSelectedCandidateOverrides] = useState<
     Record<string, MatchCandidate>
   >({});
@@ -206,12 +217,16 @@ export function MatchReviewWorkspace({
         });
         if (res.ok) {
           const data = await res.json();
-          const liveItems: MatchReviewItem[] = (data.items || [])
+          const serverItems: MatchReviewItem[] = (data.items || [])
             .map(mapProposalToMatchReviewItem)
             .filter((item: MatchReviewItem | null): item is MatchReviewItem => item !== null);
 
-          if (!isCancelled && liveItems.length > 0) {
-            setItems(liveItems);
+          if (!isCancelled) {
+            // Keep canonical REV-001 at top of queue, then append any new live items from server
+            const canonicalList = initialItems.filter(
+              (init) => !serverItems.some((srv) => srv.id === init.id || srv.eventId === init.eventId)
+            );
+            setItems([...canonicalList, ...serverItems]);
           }
         }
       } catch (_) {
@@ -224,7 +239,9 @@ export function MatchReviewWorkspace({
       isCancelled = true;
       clearInterval(interval);
     };
-  }, []);
+  }, [initialItems]);
+
+
 
   // Filter items
   const filteredItems = items.filter((item) => {
@@ -689,29 +706,41 @@ export function MatchReviewWorkspace({
                     </div>
                   </div>
 
-                  {/* Compact Supporting Evidence Card */}
+                  {/* Compact Supporting Evidence Section */}
                   {(() => {
-                    const evType = currentItem.evidence.type;
-                    const refLower = (currentItem.evidence.reference || "").toLowerCase();
-                    const isVideo = evType === "video" || refLower.endsWith(".mp4") || refLower.endsWith(".mov") || refLower.endsWith(".webm");
-                    const isDocument = evType === "document" || evType === "sheet" || evType === "transcript" || refLower.endsWith(".pdf") || refLower.endsWith(".doc") || refLower.endsWith(".docx") || refLower.endsWith(".xlsx");
-                    const isPhoto = !isVideo && !isDocument;
+                    const attachments = currentItem.evidence.attachments || [];
+                    const count = attachments.length || (currentItem.evidence.imageUrl || currentItem.evidence.videoUrl ? 1 : 0);
 
-                    const mediaLabel = isVideo ? "Field video" : isDocument ? "Field document" : "Field photo";
+                    if (count === 0) {
+                      return (
+                        <div className="compact-evidence-teaser" style={{ cursor: "default" }}>
+                          <div className="compact-evidence-header">
+                            <span className="compact-evidence-title">SUPPORTING EVIDENCE</span>
+                            <span className="compact-evidence-count">0 attachments</span>
+                          </div>
+                          <div className="compact-evidence-content" style={{ padding: "12px", color: "var(--text-secondary, #94a3b8)", fontSize: "13px" }}>
+                            No visual media attached to this event.
+                          </div>
+                        </div>
+                      );
+                    }
+
                     const reporterName = currentItem.structuredExtraction.reportedBy || currentItem.evidence.reporter?.split(" · ")[0] || "Field Reporter";
 
                     return (
                       <div
                         className="compact-evidence-teaser"
                         onClick={() => {
+                          setSelectedAttachmentIndex(0);
                           evidenceTriggerRef.current = previewBtnRef.current;
                           setEvidenceModalOpen(true);
                         }}
                         role="button"
                         tabIndex={0}
-                        aria-label={`View supporting field evidence attachment: ${mediaLabel} by ${reporterName}`}
+                        aria-label={`View supporting field evidence attachments by ${reporterName}`}
                         onKeyDown={(e) => {
                           if (e.key === "Enter" || e.key === " ") {
+                            setSelectedAttachmentIndex(0);
                             evidenceTriggerRef.current = previewBtnRef.current;
                             setEvidenceModalOpen(true);
                           }
@@ -719,65 +748,105 @@ export function MatchReviewWorkspace({
                       >
                         <div className="compact-evidence-header">
                           <span className="compact-evidence-title">SUPPORTING EVIDENCE</span>
-                          <span className="compact-evidence-count">{currentItem.evidence.count}</span>
+                          <span className="compact-evidence-count">{count} attachment{count === 1 ? "" : "s"}</span>
                         </div>
-                        <div className="compact-evidence-content">
-                          <div className="compact-evidence-thumb">
-                            {isPhoto && currentItem.evidence.imageUrl && !imageLoadError ? (
-                              <img
-                                src={currentItem.evidence.imageUrl}
-                                alt="Field photo thumbnail"
-                                className="compact-thumb-img"
-                                onError={() => setImageLoadError(true)}
-                              />
-                            ) : isVideo && currentItem.evidence.imageUrl && !imageLoadError ? (
-                              <img
-                                src={currentItem.evidence.imageUrl}
-                                alt="Field video thumbnail"
-                                className="compact-thumb-img"
-                                onError={() => setImageLoadError(true)}
-                              />
-                            ) : (
-                              <div className="compact-thumb-fallback">
-                                {isPhoto ? (
-                                  <Camera size={20} />
-                                ) : isVideo ? (
-                                  <Video size={20} />
-                                ) : (
-                                  <FileText size={20} />
-                                )}
-                              </div>
-                            )}
 
-                            {currentItem.evidence.isSyntheticDemo && (
-                              <span className="compact-synthetic-badge">DEMO</span>
-                            )}
+                        {attachments.length > 1 ? (
+                          <div style={{ display: "grid", gridTemplateColumns: `repeat(${Math.min(attachments.length, 3)}, 1fr)`, gap: "8px", padding: "10px 12px" }}>
+                            {attachments.map((att, idx) => {
+                              const isVid = att.type === "video" || att.mimeType?.startsWith("video/") || att.fileName?.match(/\.(mp4|mov|webm)$/i);
+                              return (
+                                <div
+                                  key={att.id || idx}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setSelectedAttachmentIndex(idx);
+                                    evidenceTriggerRef.current = previewBtnRef.current;
+                                    setEvidenceModalOpen(true);
+                                  }}
+                                  style={{
+                                    position: "relative",
+                                    height: "72px",
+                                    borderRadius: "6px",
+                                    overflow: "hidden",
+                                    backgroundColor: "#0f172a",
+                                    border: "1px solid var(--border-subtle, #334155)",
+                                    cursor: "pointer",
+                                    display: "flex",
+                                    alignItems: "center",
+                                    justifyContent: "center",
+                                  }}
+                                >
+                                  {isVid ? (
+                                    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "3px", color: "#38bdf8" }}>
+                                      <Play size={20} fill="#38bdf8" />
+                                      <span style={{ fontSize: "10px", maxWidth: "80px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{att.fileName}</span>
+                                    </div>
+                                  ) : att.mediaUrl ? (
+                                    <img
+                                      src={att.mediaUrl}
+                                      alt={att.fileName || "attachment"}
+                                      style={{ width: "100%", height: "100%", objectFit: "cover" }}
+                                    />
+                                  ) : (
+                                    <Camera size={20} color="#94a3b8" />
+                                  )}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        ) : (
+                          <div className="compact-evidence-content">
+                            <div className="compact-evidence-thumb">
+                              {currentItem.evidence.type !== "video" && currentItem.evidence.imageUrl && !imageLoadError ? (
+                                <img
+                                  src={currentItem.evidence.imageUrl}
+                                  alt="Field photo thumbnail"
+                                  className="compact-thumb-img"
+                                  onError={() => setImageLoadError(true)}
+                                />
+                              ) : currentItem.evidence.type === "video" && (currentItem.evidence.videoUrl || currentItem.evidence.imageUrl) && !imageLoadError ? (
+                                <div style={{ position: "relative", width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", backgroundColor: "#0f172a" }}>
+                                  <Play size={22} fill="#38bdf8" color="#38bdf8" />
+                                </div>
+                              ) : (
+                                <div className="compact-thumb-fallback">
+                                  {currentItem.evidence.type === "video" ? (
+                                    <Video size={20} />
+                                  ) : currentItem.evidence.type === "document" ? (
+                                    <FileText size={20} />
+                                  ) : (
+                                    <Camera size={20} />
+                                  )}
+                                </div>
+                              )}
 
-                            {/* Video duration overlay: ONLY shown for video with media duration metadata */}
-                            {isVideo && currentItem.evidence.duration && (
-                              <span className="compact-video-duration">
-                                {currentItem.evidence.duration}
+                              {currentItem.evidence.isSyntheticDemo && (
+                                <span className="compact-synthetic-badge">DEMO</span>
+                              )}
+                            </div>
+
+                            <div className="compact-evidence-info">
+                              <span className="compact-photo-label">
+                                {currentItem.evidence.type === "video" ? "Field video" : currentItem.evidence.type === "document" ? "Field document" : "Field photo"}
                               </span>
-                            )}
+                              <span className="compact-meta-reporter">{reporterName}</span>
+                              <button
+                                ref={previewBtnRef}
+                                type="button"
+                                className="compact-action-link"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setSelectedAttachmentIndex(0);
+                                  evidenceTriggerRef.current = previewBtnRef.current;
+                                  setEvidenceModalOpen(true);
+                                }}
+                              >
+                                View evidence →
+                              </button>
+                            </div>
                           </div>
-
-                          <div className="compact-evidence-info">
-                            <span className="compact-photo-label">{mediaLabel}</span>
-                            <span className="compact-meta-reporter">{reporterName}</span>
-                            <button
-                              ref={previewBtnRef}
-                              type="button"
-                              className="compact-action-link"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                evidenceTriggerRef.current = previewBtnRef.current;
-                                setEvidenceModalOpen(true);
-                              }}
-                            >
-                              View evidence →
-                            </button>
-                          </div>
-                        </div>
+                        )}
                       </div>
                     );
                   })()}
@@ -1569,53 +1638,102 @@ export function MatchReviewWorkspace({
 
             <div className="modal-body-split">
               {/* Left ~65%: Large Evidence Image or Native Video Player */}
-              <div className="modal-evidence-media-pane">
-                <div className="modal-media-frame">
-                  {currentItem.evidence.type === "video" && (currentItem.evidence.videoUrl || currentItem.evidence.imageUrl) && !imageLoadError ? (
-                    <video
-                      src={currentItem.evidence.videoUrl || currentItem.evidence.imageUrl}
-                      controls
-                      autoPlay
-                      playsInline
-                      className="modal-media-img"
-                      style={{ maxHeight: "560px", width: "100%", objectFit: "contain", backgroundColor: "#000", borderRadius: "8px" }}
-                      onError={() => setImageLoadError(true)}
-                    >
-                      Your browser does not support the video tag.
-                    </video>
-                  ) : currentItem.evidence.imageUrl && !imageLoadError ? (
-                    <img
-                      src={currentItem.evidence.imageUrl}
-                      alt="Field execution capture evidence"
-                      className="modal-media-img"
-                      onError={() => setImageLoadError(true)}
-                    />
-                  ) : (
-                    <div className="modal-media-fallback">
-                      {currentItem.evidence.type === "video" ? (
-                        <Video size={40} className="fallback-icon" />
-                      ) : currentItem.evidence.type === "document" || currentItem.evidence.type === "sheet" ? (
-                        <FileText size={40} className="fallback-icon" />
+              {(() => {
+                const attachments = currentItem.evidence.attachments || [];
+                const activeAtt = attachments[selectedAttachmentIndex] || attachments[0];
+                const isVideo = activeAtt ? (activeAtt.type === "video" || activeAtt.mimeType?.startsWith("video/") || activeAtt.fileName?.match(/\.(mp4|mov|webm)$/i)) : currentItem.evidence.type === "video";
+                const isDoc = activeAtt ? (activeAtt.type === "document" || activeAtt.mimeType === "application/pdf") : currentItem.evidence.type === "document";
+                const mediaUrl = activeAtt?.mediaUrl || (isVideo ? currentItem.evidence.videoUrl : currentItem.evidence.imageUrl);
+
+                return (
+                  <div className="modal-evidence-media-pane">
+                    <div className="modal-media-frame">
+                      {isVideo && mediaUrl && !imageLoadError ? (
+                        <video
+                          key={mediaUrl}
+                          src={mediaUrl}
+                          controls
+                          autoPlay
+                          playsInline
+                          className="modal-media-img"
+                          style={{ maxHeight: "560px", width: "100%", objectFit: "contain", backgroundColor: "#000", borderRadius: "8px" }}
+                          onError={() => setImageLoadError(true)}
+                        >
+                          Your browser does not support the video tag.
+                        </video>
+                      ) : !isVideo && mediaUrl && !imageLoadError ? (
+                        <img
+                          key={mediaUrl}
+                          src={mediaUrl}
+                          alt={activeAtt?.fileName || "Field execution capture evidence"}
+                          className="modal-media-img"
+                          onError={() => setImageLoadError(true)}
+                        />
                       ) : (
-                        <Camera size={40} className="fallback-icon" />
+                        <div className="modal-media-fallback">
+                          {isVideo ? (
+                            <Video size={40} className="fallback-icon" />
+                          ) : isDoc ? (
+                            <FileText size={40} className="fallback-icon" />
+                          ) : (
+                            <Camera size={40} className="fallback-icon" />
+                          )}
+                          <span className="fallback-text">
+                            {isVideo
+                              ? "Field video attachment unavailable"
+                              : isDoc
+                              ? "Document attachment preview unavailable"
+                              : "Field photo attachment unavailable"}
+                          </span>
+                          <span className="fallback-sub font-mono">{activeAtt?.fileName || currentItem.evidence.reference}</span>
+                        </div>
                       )}
-                      <span className="fallback-text">
-                        {currentItem.evidence.type === "video"
-                          ? "Field video attachment unavailable"
-                          : currentItem.evidence.type === "document"
-                          ? "Document attachment preview unavailable"
-                          : "Field photo attachment unavailable"}
-                      </span>
-                      <span className="fallback-sub font-mono">{currentItem.evidence.reference}</span>
+                      {!imageLoadError && currentItem.evidence.isSyntheticDemo && (
+                        <div className="modal-media-synthetic-badge">
+                          <span>SYNTHETIC DEMO EVIDENCE</span>
+                        </div>
+                      )}
                     </div>
-                  )}
-                  {!imageLoadError && currentItem.evidence.isSyntheticDemo && (
-                    <div className="modal-media-synthetic-badge">
-                      <span>SYNTHETIC DEMO EVIDENCE</span>
-                    </div>
-                  )}
-                </div>
-              </div>
+
+                    {attachments.length > 1 && (
+                      <div style={{ display: "flex", gap: "8px", marginTop: "12px", overflowX: "auto", paddingBottom: "4px" }}>
+                        {attachments.map((att, idx) => {
+                          const isV = att.type === "video" || att.mimeType?.startsWith("video/") || att.fileName?.match(/\.(mp4|mov|webm)$/i);
+                          const isSelected = selectedAttachmentIndex === idx;
+                          return (
+                            <button
+                              key={att.id || idx}
+                              type="button"
+                              onClick={() => {
+                                setImageLoadError(false);
+                                setSelectedAttachmentIndex(idx);
+                              }}
+                              style={{
+                                border: isSelected ? "2px solid #38bdf8" : "1px solid #334155",
+                                backgroundColor: isSelected ? "#1e293b" : "#0f172a",
+                                color: isSelected ? "#f8fafc" : "#94a3b8",
+                                borderRadius: "6px",
+                                padding: "6px 12px",
+                                cursor: "pointer",
+                                display: "flex",
+                                alignItems: "center",
+                                gap: "6px",
+                                fontSize: "12px",
+                                fontWeight: isSelected ? "600" : "normal",
+                              }}
+                            >
+                              {isV ? <Video size={14} color={isSelected ? "#38bdf8" : "#94a3b8"} /> : <Camera size={14} color={isSelected ? "#38bdf8" : "#94a3b8"} />}
+                              <span style={{ maxWidth: "120px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                                {att.fileName || `Attachment ${idx + 1}`}
+                              </span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
 
               {/* Right ~35%: Details & AI Observation */}
               <div className="modal-evidence-details-pane">

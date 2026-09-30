@@ -711,15 +711,26 @@ def clean_test_data(project_id: str, principal: Principal = Depends(authenticate
             "EVT-TEST-%", "EVT-FIELD-%", "EVT-FLUTTER-%", "EVT-RENDER-%", "EVT-N-%", "EVT-DEMO-%"
         ]
         deleted_events = 0
-        for pat in test_patterns:
-            evts = db.execute("SELECT id FROM execution_events WHERE project_id=? AND id LIKE ?", (project_id, pat)).fetchall()
-            for e in evts:
-                eid = e["id"]
-                db.execute("DELETE FROM match_proposals WHERE project_id=? AND execution_event_id=?", (project_id, eid))
-                db.execute("DELETE FROM event_evidence WHERE execution_event_id=?", (eid,))
-                db.execute("DELETE FROM execution_events WHERE project_id=? AND id=?", (project_id, eid))
-                deleted_events += 1
+        with transaction(db):
+            for pat in test_patterns:
+                evts = db.execute("SELECT id FROM execution_events WHERE project_id=? AND id LIKE ?", (project_id, pat)).fetchall()
+                for e in evts:
+                    eid = e["id"]
+                    try:
+                        db.execute("DELETE FROM match_proposals WHERE project_id=? AND execution_event_id=?", (project_id, eid))
+                    except Exception:
+                        pass
+                    try:
+                        db.execute("DELETE FROM event_evidence WHERE execution_event_id=?", (eid,))
+                    except Exception:
+                        pass
+                    try:
+                        db.execute("DELETE FROM execution_events WHERE project_id=? AND id=?", (project_id, eid))
+                        deleted_events += 1
+                    except Exception:
+                        pass
         return {"status": "ok", "deletedEvents": deleted_events}
     finally:
         db.close()
+
 
