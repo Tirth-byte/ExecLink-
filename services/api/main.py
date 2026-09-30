@@ -702,39 +702,22 @@ async def stream(project_id: str, principal: Principal=Depends(authenticate), la
 
 
 @app.post("/api/v1/projects/{project_id}/admin/clean-test-data")
-def clean_test_data(project_id: str, body: dict[str, Any] = None, principal: Principal = Depends(authenticate)):
+def clean_test_data(project_id: str, principal: Principal = Depends(authenticate)):
     db = connect()
     initialise(db)
     try:
         membership(db, project_id, principal)
-        test_patterns = [
-            "EVT-TEST-%", "EVT-FIELD-%", "EVT-FLUTTER-%", "EVT-RENDER-%", "EVT-N-%", "EVT-DEMO-%"
-        ]
-        deleted_events = 0
         with transaction(db):
-            for pat in test_patterns:
-                evts = db.execute("SELECT id FROM execution_events WHERE project_id=? AND id LIKE ?", (project_id, pat)).fetchall()
-                for e in evts:
-                    eid = e["id"]
-                    try:
-                        db.execute("DELETE FROM match_proposals WHERE project_id=? AND execution_event_id=?", (project_id, eid))
-                    except Exception:
-                        pass
-                    try:
-                        db.execute("DELETE FROM event_evidence WHERE execution_event_id=?", (eid,))
-                    except Exception:
-                        pass
-                    try:
-                        db.execute("DELETE FROM execution_events WHERE project_id=? AND id=?", (project_id, eid))
-                        deleted_events += 1
-                    except Exception:
-                        pass
-        return {"status": "ok", "deletedEvents": deleted_events}
+            db.execute("DELETE FROM match_proposals WHERE project_id=? AND (execution_event_id LIKE 'EVT-TEST-%' OR execution_event_id LIKE 'EVT-FIELD-%' OR execution_event_id LIKE 'EVT-FLUTTER-%' OR execution_event_id LIKE 'EVT-RENDER-%' OR execution_event_id LIKE 'EVT-N-%' OR execution_event_id LIKE 'EVT-DEMO-%')", (project_id,))
+            db.execute("DELETE FROM event_evidence WHERE execution_event_id LIKE 'EVT-TEST-%' OR execution_event_id LIKE 'EVT-FIELD-%' OR execution_event_id LIKE 'EVT-FLUTTER-%' OR execution_event_id LIKE 'EVT-RENDER-%' OR execution_event_id LIKE 'EVT-N-%' OR execution_event_id LIKE 'EVT-DEMO-%'")
+            db.execute("DELETE FROM execution_events WHERE project_id=? AND (id LIKE 'EVT-TEST-%' OR id LIKE 'EVT-FIELD-%' OR id LIKE 'EVT-FLUTTER-%' OR id LIKE 'EVT-RENDER-%' OR id LIKE 'EVT-N-%' OR id LIKE 'EVT-DEMO-%')", (project_id,))
+        return {"status": "ok"}
     except Exception as exc:
         logger.exception("clean_test_data failed")
         return JSONResponse(status_code=500, content={"error": str(exc)})
     finally:
         db.close()
+
 
 
 
