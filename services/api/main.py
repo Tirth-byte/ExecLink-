@@ -708,15 +708,17 @@ def clean_test_data(project_id: str, principal: Principal = Depends(authenticate
     try:
         membership(db, project_id, principal)
         with transaction(db):
-            db.execute("DELETE FROM match_proposals WHERE project_id=? AND (execution_event_id LIKE 'EVT-TEST-%' OR execution_event_id LIKE 'EVT-FIELD-%' OR execution_event_id LIKE 'EVT-FLUTTER-%' OR execution_event_id LIKE 'EVT-RENDER-%' OR execution_event_id LIKE 'EVT-N-%' OR execution_event_id LIKE 'EVT-DEMO-%')", (project_id,))
-            db.execute("DELETE FROM event_evidence WHERE execution_event_id LIKE 'EVT-TEST-%' OR execution_event_id LIKE 'EVT-FIELD-%' OR execution_event_id LIKE 'EVT-FLUTTER-%' OR execution_event_id LIKE 'EVT-RENDER-%' OR execution_event_id LIKE 'EVT-N-%' OR execution_event_id LIKE 'EVT-DEMO-%'")
-            db.execute("DELETE FROM execution_events WHERE project_id=? AND (id LIKE 'EVT-TEST-%' OR id LIKE 'EVT-FIELD-%' OR id LIKE 'EVT-FLUTTER-%' OR id LIKE 'EVT-RENDER-%' OR id LIKE 'EVT-N-%' OR id LIKE 'EVT-DEMO-%')", (project_id,))
+            for pat in ["EVT-TEST-%", "EVT-FIELD-%", "EVT-FLUTTER-%", "EVT-RENDER-%", "EVT-N-%", "EVT-DEMO-%"]:
+                db.execute("DELETE FROM match_proposals WHERE project_id=? AND execution_event_id LIKE ?", (project_id, pat))
+                db.execute("DELETE FROM event_evidence WHERE execution_event_id LIKE ?", (pat,))
+                db.execute("DELETE FROM execution_events WHERE project_id=? AND id LIKE ?", (project_id, pat))
         return {"status": "ok"}
     except Exception as exc:
         logger.exception("clean_test_data failed")
         return JSONResponse(status_code=500, content={"error": str(exc)})
     finally:
         db.close()
+
 
 
 
