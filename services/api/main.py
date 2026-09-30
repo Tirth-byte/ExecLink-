@@ -702,7 +702,7 @@ async def stream(project_id: str, principal: Principal=Depends(authenticate), la
 
 
 @app.post("/api/v1/projects/{project_id}/admin/clean-test-data")
-def clean_test_data(project_id: str, principal: Principal = Depends(authenticate)):
+def clean_test_data(project_id: str, body: dict[str, Any] = None, principal: Principal = Depends(authenticate)):
     db = connect()
     initialise(db)
     try:
@@ -730,7 +730,11 @@ def clean_test_data(project_id: str, principal: Principal = Depends(authenticate
                     except Exception:
                         pass
         return {"status": "ok", "deletedEvents": deleted_events}
+    except Exception as exc:
+        logger.exception("clean_test_data failed")
+        return JSONResponse(status_code=500, content={"error": str(exc)})
     finally:
         db.close()
+
 
 
