@@ -9,6 +9,7 @@ import '../../models/execution_event.dart';
 import '../../providers/field_providers.dart';
 import '../../services/time_agent_extractor.dart';
 import '../../widgets/confidence_badge.dart';
+import '../../widgets/field_evidence_section.dart';
 
 class TimeAgentView extends ConsumerStatefulWidget {
   const TimeAgentView({super.key});
@@ -28,7 +29,7 @@ class _TimeAgentViewState extends ConsumerState<TimeAgentView>
 
   String _selectedEventType = 'completed';
   String _selectedDiscipline = 'mechanical';
-  bool _includePhotoEvidence = true;
+  List<EvidenceAttachment> _attachments = [];
   bool _isListening = false;
   late AnimationController _pulseController;
 
@@ -163,12 +164,8 @@ class _TimeAgentViewState extends ConsumerState<TimeAgentView>
       evidence: Evidence(
         text: ext.description,
         transcript: _transcriptController.text.trim(),
-        attachmentIds: _includePhotoEvidence
-            ? [
-                'ATT-VOICE-${DateTime.now().millisecondsSinceEpoch}',
-                'ATT-SITE-PHOTO',
-              ]
-            : ['ATT-VOICE-${DateTime.now().millisecondsSinceEpoch}'],
+        attachmentIds: _attachments.map((a) => a.id).toList(),
+        attachments: _attachments,
       ),
       extractedFacts: ext.facts,
       status: 'submitted',
@@ -198,6 +195,11 @@ class _TimeAgentViewState extends ConsumerState<TimeAgentView>
       final fact = factsToSubmit[i];
       final eventId = 'EVT-FIELD-${DateTime.now().millisecondsSinceEpoch}-$i';
 
+      // Multi-fact evidence assignment: get evidence that applies to fact i
+      final assignedAttachments = _attachments.where((a) =>
+        a.assignedFactIndexes.isEmpty || a.assignedFactIndexes.contains(i)
+      ).toList();
+
       final newEvent = ExecutionEvent(
         id: eventId,
         projectId: 'PRJ-DEMO-001',
@@ -207,12 +209,8 @@ class _TimeAgentViewState extends ConsumerState<TimeAgentView>
         evidence: Evidence(
           text: fact.description,
           transcript: _transcriptController.text.trim(),
-          attachmentIds: _includePhotoEvidence
-              ? [
-                  'ATT-VOICE-${DateTime.now().millisecondsSinceEpoch}-$i',
-                  'ATT-SITE-PHOTO',
-                ]
-              : ['ATT-VOICE-${DateTime.now().millisecondsSinceEpoch}-$i'],
+          attachmentIds: assignedAttachments.map((a) => a.id).toList(),
+          attachments: assignedAttachments,
         ),
         extractedFacts: fact.facts,
         status: 'submitted',
@@ -437,7 +435,22 @@ class _TimeAgentViewState extends ConsumerState<TimeAgentView>
                     ),
                     onChanged: (text) => _applyTranscript(text),
                   ),
-                  const SizedBox(height: 10),
+                  const SizedBox(height: 12),
+
+                  // 1.1 Field Evidence Section (Camera, Photos, Video, Multi-Fact Assignment)
+                  FieldEvidenceSection(
+                    attachments: _attachments,
+                    onChanged: (items) => setState(() => _attachments = items),
+                    factLabels: multiFacts.length > 1
+                        ? multiFacts
+                            .asMap()
+                            .entries
+                            .map((e) =>
+                                'Fact ${e.key + 1}: ${e.value.eventType.toUpperCase()}')
+                            .toList()
+                        : const [],
+                  ),
+                  const SizedBox(height: 12),
 
                   // Quick test scenario chips
                   Text(
@@ -799,25 +812,6 @@ class _TimeAgentViewState extends ConsumerState<TimeAgentView>
                       labelText: 'Delay / Blocker Reason (if applicable)',
                       hintText: 'e.g. Permit delay, Access issue',
                     ),
-                  ),
-                  const SizedBox(height: 12),
-
-                  Row(
-                    children: [
-                      Checkbox(
-                        value: _includePhotoEvidence,
-                        activeColor: AppColors.action,
-                        onChanged: (val) => setState(
-                          () => _includePhotoEvidence = val ?? false,
-                        ),
-                      ),
-                      const Expanded(
-                        child: Text(
-                          'Attach audio transcript & site photo metadata',
-                          style: AppTypography.bodySm,
-                        ),
-                      ),
-                    ],
                   ),
                   const SizedBox(height: 16),
 

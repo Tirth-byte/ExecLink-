@@ -2,11 +2,18 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:execlink_field/models/common_types.dart';
 import 'package:execlink_field/models/execution_event.dart';
 import 'package:execlink_field/models/extracted_facts.dart';
+import 'package:execlink_field/core/config/api_config.dart';
 import 'package:execlink_field/services/api_client.dart';
 import 'package:execlink_field/services/offline_sync_service.dart';
 import 'package:execlink_field/services/sqlite_queue_service.dart';
 
 void main() {
+  test('production API is the default and local demo fallback is opt-in', () {
+    expect(ApiConfig.baseUrl, 'https://execlink-api.onrender.com/api/v1');
+    expect(ApiConfig.environment, 'production');
+    expect(ApiClient().useLocalFallback, isFalse);
+  });
+
   group('ExecutionEvent Submission & Offline Queue Tests', () {
     late ApiClient apiClient;
     late OfflineSyncService syncService;

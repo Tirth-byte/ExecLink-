@@ -9,6 +9,7 @@ import '../../models/execution_event.dart';
 import '../../models/extracted_facts.dart';
 import '../../models/schedule_activity.dart';
 import '../../providers/field_providers.dart';
+import '../../widgets/field_evidence_section.dart';
 
 class QuickUpdateView extends ConsumerStatefulWidget {
   final String? initialActivityId;
@@ -31,7 +32,7 @@ class _QuickUpdateViewState extends ConsumerState<QuickUpdateView> {
   final TextEditingController _quantityController = TextEditingController();
 
   String _selectedDiscipline = 'structural';
-  bool _attachPhoto = true;
+  List<EvidenceAttachment> _attachments = [];
 
   @override
   void initState() {
@@ -113,9 +114,8 @@ class _QuickUpdateViewState extends ConsumerState<QuickUpdateView> {
       receivedAt: nowIso,
       evidence: Evidence(
         text: text,
-        attachmentIds: _attachPhoto
-            ? ['ATT-QUICK-${DateTime.now().millisecondsSinceEpoch}']
-            : [],
+        attachmentIds: _attachments.map((a) => a.id).toList(),
+        attachments: _attachments,
       ),
       extractedFacts: facts,
       status: 'submitted',
@@ -404,23 +404,12 @@ class _QuickUpdateViewState extends ConsumerState<QuickUpdateView> {
                       labelText: 'Notes / Supervisor Field Evidence',
                     ),
                   ),
-                  const SizedBox(height: 12),
+                  const SizedBox(height: 14),
 
-                  Row(
-                    children: [
-                      Checkbox(
-                        value: _attachPhoto,
-                        activeColor: AppColors.action,
-                        onChanged: (val) =>
-                            setState(() => _attachPhoto = val ?? false),
-                      ),
-                      const Expanded(
-                        child: Text(
-                          'Attach camera photo & GPS coordinates metadata',
-                          style: AppTypography.bodySm,
-                        ),
-                      ),
-                    ],
+                  // Reusable Field Evidence Component
+                  FieldEvidenceSection(
+                    attachments: _attachments,
+                    onChanged: (items) => setState(() => _attachments = items),
                   ),
                   const SizedBox(height: 16),
 

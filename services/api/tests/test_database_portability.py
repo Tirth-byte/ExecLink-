@@ -37,5 +37,23 @@ class DatabasePortabilityTests(unittest.TestCase):
             self.assertIn(required, migration)
 
 
+    def test_evidence_migrations_exist_for_both_databases(self):
+        pg_evidence = (
+            Path(__file__).resolve().parents[1]
+            / "migrations"
+            / "postgresql"
+            / "002_evidence.sql"
+        ).read_text()
+        sqlite_evidence = (
+            Path(__file__).resolve().parents[1]
+            / "migrations"
+            / "sqlite"
+            / "004_evidence.sql"
+        ).read_text()
+        for required in ("CREATE TABLE IF NOT EXISTS evidence", "CREATE TABLE IF NOT EXISTS event_evidence", "storage_key", "sha256", "mime_type", "type"):
+            self.assertIn(required, pg_evidence)
+            self.assertIn(required, sqlite_evidence)
+
+
 if __name__ == "__main__":
     unittest.main()

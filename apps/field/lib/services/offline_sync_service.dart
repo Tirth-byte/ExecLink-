@@ -1,5 +1,6 @@
 import 'package:uuid/uuid.dart';
 
+import '../models/common_types.dart';
 import '../models/execution_event.dart';
 import '../models/match_proposal.dart';
 import 'api_client.dart';
@@ -52,6 +53,47 @@ class OfflineSyncService {
     return 'EVT-FIELD-${DateTime.now().millisecondsSinceEpoch}-${_uuid.v4().substring(0, 8)}';
   }
 
+  /// Helper to upload un-synced attachments for an event
+  Future<ExecutionEvent> _uploadEventAttachments(
+    String projectId,
+    ExecutionEvent event,
+  ) async {
+    final attachments = event.evidence.attachments;
+    if (attachments.isEmpty) return event;
+
+    final List<EvidenceAttachment> updatedAttachments = [];
+    final List<String> updatedIds = [];
+
+    for (final att in attachments) {
+      if (att.syncStatus != 'synced' && att.localPath.isNotEmpty) {
+        try {
+          final uploaded = await apiClient.uploadEvidence(
+            projectId: projectId,
+            attachment: att,
+          );
+          updatedAttachments.add(uploaded);
+          updatedIds.add(uploaded.id);
+        } catch (_) {
+          // If upload fails, retain local attachment as pending
+          updatedAttachments.add(att);
+          updatedIds.add(att.id);
+        }
+      } else {
+        updatedAttachments.add(att);
+        updatedIds.add(att.id);
+      }
+    }
+
+    return event.copyWith(
+      evidence: Evidence(
+        text: event.evidence.text,
+        transcript: event.evidence.transcript,
+        attachmentIds: updatedIds,
+        attachments: updatedAttachments,
+      ),
+    );
+  }
+
   /// Queue or submit an execution event
   Future<ExecutionEvent> submitEvent(ExecutionEvent newEvent) async {
     await sqliteQueue.ready;
@@ -60,7 +102,7 @@ class OfflineSyncService {
         : newEvent;
 
     if (simulateOffline) {
-      // Retain as pending in resilient SQLite queue
+      // Retain as pending in resilient SQLite queue with local evidence
       final pendingEvent = eventWithClientId.copyWith(
         syncStatus: SyncStatus.pending,
       );
@@ -70,12 +112,19 @@ class OfflineSyncService {
     }
 
     try {
-      final res = await apiClient.submitEvent(
-        projectId: eventWithClientId.projectId,
-        event: eventWithClientId,
+      // 1. Upload local attachments first if online
+      final preparedEvent = await _uploadEventAttachments(
+        eventWithClientId.projectId,
+        eventWithClientId,
       );
 
-      final syncedEvent = eventWithClientId.copyWith(
+      // 2. Submit execution event
+      final res = await apiClient.submitEvent(
+        projectId: preparedEvent.projectId,
+        event: preparedEvent,
+      );
+
+      final syncedEvent = preparedEvent.copyWith(
         syncStatus: SyncStatus.synced,
         status: 'submitted',
       );
@@ -118,11 +167,17 @@ class OfflineSyncService {
           _events[i] = ev.copyWith(syncStatus: SyncStatus.syncing);
           sqliteQueue.markSyncing(ev.clientEventId);
 
-          final res = await apiClient.submitEvent(
-            projectId: ev.projectId,
-            event: ev,
+          // Upload attachments first
+          final preparedEvent = await _uploadEventAttachments(
+            ev.projectId,
+            ev,
           );
-          _events[i] = ev.copyWith(
+
+          final res = await apiClient.submitEvent(
+            projectId: preparedEvent.projectId,
+            event: preparedEvent,
+          );
+          _events[i] = preparedEvent.copyWith(
             syncStatus: SyncStatus.synced,
             syncError: null,
           );

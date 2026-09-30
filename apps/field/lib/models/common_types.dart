@@ -100,7 +100,12 @@ class EvidenceAttachment {
   final String fileName;
   final int sizeBytes;
   final String capturedAt;
+  final String? uploadedAt;
   final String source;
+  final String? mediaUrl;
+  final String? sha256;
+  final String syncStatus;
+  final List<int> assignedFactIndexes;
   final double? latitude;
   final double? longitude;
   final double? accuracyMetres;
@@ -113,7 +118,12 @@ class EvidenceAttachment {
     required this.fileName,
     required this.sizeBytes,
     required this.capturedAt,
+    this.uploadedAt,
     required this.source,
+    this.mediaUrl,
+    this.sha256,
+    this.syncStatus = 'synced',
+    this.assignedFactIndexes = const [],
     this.latitude,
     this.longitude,
     this.accuracyMetres,
@@ -133,7 +143,15 @@ class EvidenceAttachment {
         capturedAt:
             json['capturedAt'] as String? ??
             DateTime.now().toUtc().toIso8601String(),
+        uploadedAt: json['uploadedAt'] as String?,
         source: json['source'] as String? ?? 'field_device',
+        mediaUrl: json['mediaUrl'] as String?,
+        sha256: json['sha256'] as String?,
+        syncStatus: json['syncStatus'] as String? ?? 'synced',
+        assignedFactIndexes: (json['assignedFactIndexes'] as List<dynamic>?)
+                ?.map((e) => (e as num).toInt())
+                .toList() ??
+            const [],
         latitude: (json['latitude'] as num?)?.toDouble(),
         longitude: (json['longitude'] as num?)?.toDouble(),
         accuracyMetres: (json['accuracyMetres'] as num?)?.toDouble(),
@@ -147,11 +165,54 @@ class EvidenceAttachment {
     'fileName': fileName,
     'sizeBytes': sizeBytes,
     'capturedAt': capturedAt,
+    if (uploadedAt != null) 'uploadedAt': uploadedAt,
     'source': source,
+    if (mediaUrl != null) 'mediaUrl': mediaUrl,
+    if (sha256 != null) 'sha256': sha256,
+    'syncStatus': syncStatus,
+    'assignedFactIndexes': assignedFactIndexes,
     if (latitude != null) 'latitude': latitude,
     if (longitude != null) 'longitude': longitude,
     if (accuracyMetres != null) 'accuracyMetres': accuracyMetres,
     if (durationMilliseconds != null)
       'durationMilliseconds': durationMilliseconds,
   };
+
+  EvidenceAttachment copyWith({
+    String? id,
+    EvidenceType? type,
+    String? localPath,
+    String? fileName,
+    int? sizeBytes,
+    String? capturedAt,
+    String? uploadedAt,
+    String? source,
+    String? mediaUrl,
+    String? sha256,
+    String? syncStatus,
+    List<int>? assignedFactIndexes,
+    double? latitude,
+    double? longitude,
+    double? accuracyMetres,
+    int? durationMilliseconds,
+  }) {
+    return EvidenceAttachment(
+      id: id ?? this.id,
+      type: type ?? this.type,
+      localPath: localPath ?? this.localPath,
+      fileName: fileName ?? this.fileName,
+      sizeBytes: sizeBytes ?? this.sizeBytes,
+      capturedAt: capturedAt ?? this.capturedAt,
+      uploadedAt: uploadedAt ?? this.uploadedAt,
+      source: source ?? this.source,
+      mediaUrl: mediaUrl ?? this.mediaUrl,
+      sha256: sha256 ?? this.sha256,
+      syncStatus: syncStatus ?? this.syncStatus,
+      assignedFactIndexes: assignedFactIndexes ?? this.assignedFactIndexes,
+      latitude: latitude ?? this.latitude,
+      longitude: longitude ?? this.longitude,
+      accuracyMetres: accuracyMetres ?? this.accuracyMetres,
+      durationMilliseconds: durationMilliseconds ?? this.durationMilliseconds,
+    );
+  }
 }

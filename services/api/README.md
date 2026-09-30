@@ -17,13 +17,12 @@ uses a local-development-only JWT secret unless `EXECLINK_JWT_SECRET` is set,
 and stops cleanly on Ctrl+C. It is intentionally not a persistent background
 service. Check it before launching Flutter with `./scripts/check-dev.sh`.
 
-Launch the field app with `./scripts/run-field.sh`. The script uses loopback for
-an iOS Simulator and the Mac's current LAN address for a physical iPhone. A
-physical iPhone and Mac must be on the same network. Production builds must
-supply an HTTPS API endpoint at build time, for example:
+Launch the field app with `./scripts/run-field.sh`. It uses the public HTTPS API
+by default, so a physical iPhone does not depend on the Mac's LAN address or a
+local FastAPI process. Developers can still override the endpoint explicitly:
 
 ```bash
-flutter build ios --dart-define=EXECLINK_API_BASE_URL=https://<api-domain>/api/v1 --dart-define=EXECLINK_ENVIRONMENT=production
+EXECLINK_API_BASE_URL=http://127.0.0.1:8000/api/v1 EXECLINK_ENVIRONMENT=development ./scripts/run-field.sh
 ```
 
 No production domain is assumed or embedded in source.

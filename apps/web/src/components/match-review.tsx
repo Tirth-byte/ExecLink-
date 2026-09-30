@@ -1407,10 +1407,22 @@ export function MatchReviewWorkspace({
             </header>
 
             <div className="modal-body-split">
-              {/* Left ~65%: Large Evidence Image with sensible containment */}
+              {/* Left ~65%: Large Evidence Image or Native Video Player */}
               <div className="modal-evidence-media-pane">
                 <div className="modal-media-frame">
-                  {currentItem.evidence.imageUrl && !imageLoadError ? (
+                  {currentItem.evidence.type === "video" && (currentItem.evidence.videoUrl || currentItem.evidence.imageUrl) && !imageLoadError ? (
+                    <video
+                      src={currentItem.evidence.videoUrl || currentItem.evidence.imageUrl}
+                      controls
+                      autoPlay
+                      playsInline
+                      className="modal-media-img"
+                      style={{ maxHeight: "560px", width: "100%", objectFit: "contain", backgroundColor: "#000", borderRadius: "8px" }}
+                      onError={() => setImageLoadError(true)}
+                    >
+                      Your browser does not support the video tag.
+                    </video>
+                  ) : currentItem.evidence.imageUrl && !imageLoadError ? (
                     <img
                       src={currentItem.evidence.imageUrl}
                       alt="Field execution capture evidence"
@@ -1436,7 +1448,7 @@ export function MatchReviewWorkspace({
                       <span className="fallback-sub font-mono">{currentItem.evidence.reference}</span>
                     </div>
                   )}
-                  {!imageLoadError && (
+                  {!imageLoadError && currentItem.evidence.isSyntheticDemo && (
                     <div className="modal-media-synthetic-badge">
                       <span>SYNTHETIC DEMO EVIDENCE</span>
                     </div>

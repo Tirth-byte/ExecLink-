@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:crypto/crypto.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:image_picker/image_picker.dart';
@@ -116,13 +117,17 @@ class EvidenceCaptureService {
     final destination = p.join(directory.path, safeName);
     await File(picked.path).copy(destination);
     final stored = File(destination);
+    final bytes = await stored.readAsBytes();
+    final hashHex = sha256.convert(bytes).toString();
     final location = await _optionalLocation();
     return EvidenceAttachment(
       id: id,
       type: type,
       localPath: destination,
       fileName: picked.name,
-      sizeBytes: await stored.length(),
+      sizeBytes: bytes.length,
+      sha256: hashHex,
+      syncStatus: 'pending',
       capturedAt: DateTime.now().toUtc().toIso8601String(),
       source: source,
       latitude: location?.latitude,

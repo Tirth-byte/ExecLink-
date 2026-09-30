@@ -48,8 +48,21 @@ def verify_proposal(db: DatabaseConnection, project_id: str, proposal_id: str, a
     )
     db.execute("UPDATE match_proposals SET status='verified',version=version+1 WHERE id=?", (proposal_id,))
     db.execute("UPDATE execution_events SET status='verified',version=version+1 WHERE id=?", (proposal["execution_event_id"],))
-    audit_sequence, _ = append_entry(db, project_id=project_id, actor_id=actor.user_id, action="proposal.verified", entity_type="MatchProposal", entity_id=proposal_id, occurred_at=timestamp, request_id=request_id, payload={"verificationId": verification_id, "activityId": activity_id, "previousProgressPercent": activity["actual_progress_percent"], "progressPercent": progress, "activityVersion": activity["version"] + 1})
+    ev_rows = db.execute("SELECT evidence_id FROM event_evidence WHERE execution_event_id=?", (proposal["execution_event_id"],)).fetchall()
+    evidence_ids = [r[0] for r in ev_rows] if ev_rows else []
+    audit_payload = {
+        "verificationId": verification_id,
+        "activityId": activity_id,
+        "previousProgressPercent": activity["actual_progress_percent"],
+        "progressPercent": progress,
+        "activityVersion": activity["version"] + 1,
+    }
+    if evidence_ids:
+        audit_payload["evidenceIds"] = evidence_ids
+    audit_sequence, _ = append_entry(db, project_id=project_id, actor_id=actor.user_id, action="proposal.verified", entity_type="MatchProposal", entity_id=proposal_id, occurred_at=timestamp, request_id=request_id, payload=audit_payload)
     response = {"verificationId": verification_id, "proposalId": proposal_id, "activityId": activity_id, "previousProgressPercent": activity["actual_progress_percent"], "progressPercent": progress, "activityVersion": activity["version"] + 1, "auditSequence": audit_sequence}
+    if evidence_ids:
+        response["evidenceIds"] = evidence_ids
     db.execute("INSERT INTO outbox_events VALUES(?,?,?,?,?,?,?,NULL)", (new_id("OBX"), project_id, "activity", activity_id, "activity.progress_verified", canonical(response), timestamp))
     store(db, project_id, actor.user_id, route, key, command, 200, response)
     return 200, response

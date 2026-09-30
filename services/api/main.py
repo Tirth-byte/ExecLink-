@@ -1,12 +1,12 @@
-from __future__ import annotations
-
 import asyncio
+import hashlib
 import json
 import logging
+import re
 from contextlib import asynccontextmanager
 from typing import Any, AsyncIterator
 
-from fastapi import Depends, FastAPI, Header, Query, Request
+from fastapi import Depends, FastAPI, File, Form, Header, Query, Request, Response, UploadFile
 from pydantic import BaseModel
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, PlainTextResponse, StreamingResponse
@@ -17,7 +17,8 @@ from .db import close_pool, connect, initialise, is_integrity_error, transaction
 from .errors import ApiProblem, not_found
 from .idempotency import replay, store
 from .reports import REPORT_TYPES, as_csv, build_report
-from .serializers import activity, event, proposal
+from .serializers import activity, event, proposal, evidence_item
+from .storage import get_storage
 from .util import canonical, new_id, now
 from .verification import reject_proposal, verify_proposal
 
@@ -153,6 +154,186 @@ def health() -> JSONResponse:
             db.close()
 
 
+ALLOWED_MIME_TYPES = {
+    # Photos
+    "image/jpeg", "image/png", "image/webp", "image/heic", "image/heif",
+    # Videos
+    "video/mp4", "video/quicktime", "video/x-m4v", "video/webm",
+    # Audio
+    "audio/m4a", "audio/mp4", "audio/aac", "audio/mpeg", "audio/wav", "audio/x-m4a",
+    # Documents
+    "application/pdf", "text/plain", "text/csv",
+}
+MAX_FILE_SIZES = {
+    "photo": 20 * 1024 * 1024,      # 20MB
+    "video": 100 * 1024 * 1024,    # 100MB
+    "audio": 25 * 1024 * 1024,     # 25MB
+    "document": 25 * 1024 * 1024,  # 25MB
+}
+
+
+def link_event_evidence(db, project_id: str, event_id: str, attachment_ids: list[str]) -> list[dict[str, Any]]:
+    linked_items = []
+    for ev_id in attachment_ids:
+        ev_row = db.execute("SELECT * FROM evidence WHERE id=? AND project_id=?", (ev_id, project_id)).fetchone()
+        if ev_row:
+            if db.engine == "postgresql":
+                db.execute("INSERT INTO event_evidence(execution_event_id, evidence_id) VALUES(?,?) ON CONFLICT DO NOTHING", (event_id, ev_id))
+            else:
+                db.execute("INSERT OR IGNORE INTO event_evidence(execution_event_id, evidence_id) VALUES(?,?)", (event_id, ev_id))
+            linked_items.append(evidence_item(ev_row))
+    return linked_items
+
+
+@app.post("/api/v1/projects/{project_id}/evidence/upload", status_code=201)
+async def upload_evidence(
+    project_id: str,
+    file: UploadFile = File(...),
+    type: str = Form(default="photo"),
+    captured_at: str | None = Form(default=None),
+    source_capture_id: str | None = Form(default=None),
+    duration_ms: int | None = Form(default=None),
+    width: int | None = Form(default=None),
+    height: int | None = Form(default=None),
+    metadata: str | None = Form(default="{}"),
+    principal: Principal = Depends(authenticate),
+):
+    db = connect()
+    initialise(db)
+    try:
+        require_permission(db, project_id, principal, "execution.create")
+        
+        content = await file.read()
+        file_size = len(content)
+        
+        raw_mime = (file.content_type or "").lower().split(";")[0].strip()
+        filename = file.filename or "evidence_file"
+        
+        if not raw_mime or raw_mime == "application/octet-stream":
+            import os
+            ext = os.path.splitext(filename)[1].lower()
+            mime_map = {
+                ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png",
+                ".heic": "image/heic", ".heif": "image/heif", ".webp": "image/webp",
+                ".mp4": "video/mp4", ".mov": "video/quicktime", ".m4v": "video/x-m4v", ".webm": "video/webm",
+                ".m4a": "audio/m4a", ".aac": "audio/aac", ".mp3": "audio/mpeg", ".wav": "audio/wav",
+                ".pdf": "application/pdf", ".txt": "text/plain", ".csv": "text/csv"
+            }
+            raw_mime = mime_map.get(ext, raw_mime)
+
+        if raw_mime not in ALLOWED_MIME_TYPES:
+            raise ApiProblem(415, "UNSUPPORTED_MEDIA_TYPE", f"MIME type '{raw_mime}' is not supported for field evidence", {"allowed": sorted(ALLOWED_MIME_TYPES)})
+        
+        norm_type = type.lower()
+        if norm_type not in ("photo", "video", "audio", "document"):
+            norm_type = "video" if raw_mime.startswith("video/") else "audio" if raw_mime.startswith("audio/") else "photo"
+
+        max_limit = MAX_FILE_SIZES.get(norm_type, 20 * 1024 * 1024)
+        if file_size > max_limit:
+            raise ApiProblem(413, "PAYLOAD_TOO_LARGE", f"File size ({file_size} bytes) exceeds maximum limit of {max_limit} bytes for {norm_type}")
+
+        sha256_hash = hashlib.sha256(content).hexdigest()
+        evidence_id = new_id("EVD")
+        safe_name = re.sub(r'[^a-zA-Z0-9_.-]', '_', os.path.basename(filename) if "os" in globals() or "os" in locals() else filename)
+        storage_key = f"{project_id}/{evidence_id}_{safe_name}"
+        
+        storage = get_storage()
+        storage.save(storage_key, content, raw_mime)
+        media_url = storage.get_url(storage_key, project_id, evidence_id)
+        
+        upload_time = now()
+        capture_time = captured_at or upload_time
+        
+        try:
+            meta_dict = json.loads(metadata) if metadata else {}
+        except Exception:
+            meta_dict = {}
+
+        with transaction(db):
+            db.execute(
+                "INSERT INTO evidence(id, project_id, source_capture_id, type, storage_key, mime_type, file_name, file_size, thumbnail_url, media_url, captured_at, uploaded_at, captured_by, duration_ms, width, height, sha256, sync_status, metadata_json, created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'synced',?,?)",
+                (
+                    evidence_id, project_id, source_capture_id, norm_type, storage_key, raw_mime, safe_name, file_size, None, media_url, capture_time, upload_time, principal.user_id, duration_ms, width, height, sha256_hash, canonical(meta_dict), upload_time
+                )
+            )
+            row = db.execute("SELECT * FROM evidence WHERE id=?", (evidence_id,)).fetchone()
+            return JSONResponse(status_code=201, content=evidence_item(row))
+    finally:
+        db.close()
+
+
+@app.get("/api/v1/projects/{project_id}/evidence/{evidence_id}")
+def get_evidence_item(project_id: str, evidence_id: str, principal: Principal = Depends(authenticate)):
+    db = connect()
+    try:
+        membership(db, project_id, principal)
+        row = db.execute("SELECT * FROM evidence WHERE id=? AND project_id=?", (evidence_id, project_id)).fetchone()
+        if not row:
+            raise not_found("evidence", evidence_id)
+        res = evidence_item(row)
+        res["mediaUrl"] = get_storage().get_url(row["storage_key"], project_id, evidence_id)
+        return res
+    finally:
+        db.close()
+
+
+@app.get("/api/v1/projects/{project_id}/evidence/{evidence_id}/media")
+def get_evidence_media(project_id: str, evidence_id: str, principal: Principal = Depends(authenticate)):
+    db = connect()
+    try:
+        membership(db, project_id, principal)
+        row = db.execute("SELECT * FROM evidence WHERE id=? AND project_id=?", (evidence_id, project_id)).fetchone()
+        if not row:
+            raise not_found("evidence", evidence_id)
+        storage = get_storage()
+        try:
+            data, content_type = storage.read(row["storage_key"])
+        except FileNotFoundError:
+            raise not_found("evidence_file", evidence_id)
+        return Response(
+            content=data,
+            media_type=content_type,
+            headers={
+                "Content-Disposition": f'inline; filename="{row["file_name"]}"',
+                "Accept-Ranges": "bytes",
+                "Cache-Control": "public, max-age=86400",
+            },
+        )
+    finally:
+        db.close()
+
+
+@app.get("/api/v1/projects/{project_id}/events/{event_id}/evidence")
+def list_event_evidence(project_id: str, event_id: str, principal: Principal = Depends(authenticate)):
+    db = connect()
+    try:
+        membership(db, project_id, principal)
+        rows = db.execute(
+            "SELECT e.* FROM evidence e JOIN event_evidence ee ON e.id = ee.evidence_id WHERE ee.execution_event_id = ? AND e.project_id = ?",
+            (event_id, project_id),
+        ).fetchall()
+        return {"items": [evidence_item(r) for r in rows]}
+    finally:
+        db.close()
+
+
+@app.post("/api/v1/projects/{project_id}/events/{event_id}/evidence")
+def associate_event_evidence(project_id: str, event_id: str, body: dict[str, Any], principal: Principal = Depends(authenticate)):
+    db = connect()
+    initialise(db)
+    try:
+        with transaction(db):
+            require_permission(db, project_id, principal, "execution.create")
+            event_row = db.execute("SELECT * FROM execution_events WHERE id=? AND project_id=?", (event_id, project_id)).fetchone()
+            if not event_row:
+                raise not_found("event", event_id)
+            evidence_ids = body.get("evidenceIds", [])
+            linked = link_event_evidence(db, project_id, event_id, evidence_ids)
+            return {"linkedCount": len(linked), "items": linked}
+    finally:
+        db.close()
+
+
 @app.post("/api/v1/projects/{project_id}/events", status_code=201)
 def create_event(project_id: str, body: dict[str, Any], request: Request, principal: Principal = Depends(authenticate), idempotency_key: str | None = Header(default=None, alias="Idempotency-Key")):
     key = require_key(idempotency_key); db = connect(); initialise(db)
@@ -165,14 +346,45 @@ def create_event(project_id: str, body: dict[str, Any], request: Request, princi
             event_id = body.get("id") or new_id("EVT")
             if body.get("projectId", project_id) != project_id: raise ApiProblem(422, "PROJECT_MISMATCH", "Body projectId differs from route")
             timestamp = now()
-            document = {"id": event_id, "projectId": project_id, "reporterId": principal.user_id, "observedAt": body.get("observedAt", timestamp), "receivedAt": timestamp, "evidence": body.get("evidence", {"text": "", "attachmentIds": []}), "extractedFacts": body.get("extractedFacts", {"keywords": []}), "status": "submitted"}
+            
+            raw_evidence = body.get("evidence", {"text": "", "attachmentIds": []})
+            attachment_ids = raw_evidence.get("attachmentIds") or body.get("evidenceIds") or []
+            
+            document = {
+                "id": event_id,
+                "projectId": project_id,
+                "reporterId": principal.user_id,
+                "observedAt": body.get("observedAt", timestamp),
+                "receivedAt": timestamp,
+                "evidence": raw_evidence,
+                "extractedFacts": body.get("extractedFacts", {"keywords": []}),
+                "status": "submitted"
+            }
             try:
-                db.execute("INSERT INTO execution_events(id,project_id,reporter_id,observed_at,received_at,evidence_json,extracted_facts_json,status) VALUES(?,?,?,?,?,?,?,'submitted')", (event_id, project_id, principal.user_id, document["observedAt"], timestamp, canonical(document["evidence"]), canonical(document["extractedFacts"])))
+                db.execute(
+                    "INSERT INTO execution_events(id,project_id,reporter_id,observed_at,received_at,evidence_json,extracted_facts_json,status) VALUES(?,?,?,?,?,?,?,'submitted')",
+                    (event_id, project_id, principal.user_id, document["observedAt"], timestamp, canonical(document["evidence"]), canonical(document["extractedFacts"]))
+                )
             except Exception as exc:
                 if not is_integrity_error(exc):
                     raise
                 raise ApiProblem(409, "RESOURCE_CONFLICT", "Event identifier already exists") from exc
-            append_entry(db, project_id=project_id, actor_id=principal.user_id, action="event.submitted", entity_type="ExecutionEvent", entity_id=event_id, occurred_at=timestamp, request_id=request.state.request_id, payload={"observedAt": document["observedAt"]})
+            
+            linked_evidence = link_event_evidence(db, project_id, event_id, attachment_ids)
+            if linked_evidence:
+                document["evidence"]["attachments"] = linked_evidence
+                
+            append_entry(
+                db,
+                project_id=project_id,
+                actor_id=principal.user_id,
+                action="event.submitted",
+                entity_type="ExecutionEvent",
+                entity_id=event_id,
+                occurred_at=timestamp,
+                request_id=request.state.request_id,
+                payload={"observedAt": document["observedAt"], "evidenceIds": attachment_ids}
+            )
             db.execute("INSERT INTO outbox_events VALUES(?,?,?,?,?,?,?,NULL)", (new_id("OBX"), project_id, "event", event_id, "event.submitted", canonical(document), timestamp))
             store(db, project_id, principal.user_id, route, key, body, 201, document)
             return document
@@ -185,7 +397,14 @@ def get_event(project_id: str, event_id: str, principal: Principal = Depends(aut
     try:
         membership(db, project_id, principal); row=db.execute("SELECT * FROM execution_events WHERE id=? AND project_id=?",(event_id,project_id)).fetchone()
         if not row: raise not_found("event",event_id)
-        result=event(row); p=db.execute("SELECT id,status FROM match_proposals WHERE execution_event_id=?",(event_id,)).fetchone(); result["proposal"] = dict(p) if p else None; return result
+        result=event(row)
+        ev_rows = db.execute("SELECT e.* FROM evidence e JOIN event_evidence ee ON e.id=ee.evidence_id WHERE ee.execution_event_id=? AND e.project_id=?", (event_id, project_id)).fetchall()
+        if ev_rows:
+            result["evidence"]["attachments"] = [evidence_item(r) for r in ev_rows]
+            result["evidence"]["attachmentIds"] = [r["id"] for r in ev_rows]
+        p=db.execute("SELECT id,status FROM match_proposals WHERE execution_event_id=?",(event_id,)).fetchone()
+        result["proposal"] = dict(p) if p else None
+        return result
     finally: db.close()
 
 

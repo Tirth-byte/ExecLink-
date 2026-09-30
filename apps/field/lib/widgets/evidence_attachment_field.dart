@@ -1,5 +1,7 @@
 import 'dart:io';
 
+export 'field_evidence_section.dart';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:open_filex/open_filex.dart';
