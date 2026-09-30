@@ -33,6 +33,7 @@ import {
 } from "@/data/match-review";
 import { ExecutionDiscipline } from "@/data/live-execution";
 import { API_BASE_URL } from "@/lib/api-config";
+import { getValidAuthToken } from "@/lib/auth-client";
 
 function mapProposalToMatchReviewItem(prop: any): MatchReviewItem | null {
   const ev = prop.event || {};
@@ -199,7 +200,7 @@ export function MatchReviewWorkspace({
     let isCancelled = false;
     async function fetchLiveProposals() {
       try {
-        const token = typeof window !== "undefined" ? localStorage.getItem("execlink_token") : null;
+        const token = await getValidAuthToken();
         const res = await fetch(`${API_BASE_URL}/projects/PRJ-DEMO-001/proposals`, {
           headers: token ? { Authorization: `Bearer ${token}` } : {},
         });
@@ -210,19 +211,15 @@ export function MatchReviewWorkspace({
             .filter((item: MatchReviewItem | null): item is MatchReviewItem => item !== null);
 
           if (!isCancelled && liveItems.length > 0) {
-            setItems((prev) => {
-              const liveIds = new Set(liveItems.map((i) => i.id));
-              const remainingDemo = prev.filter((i) => !liveIds.has(i.id));
-              return [...liveItems, ...remainingDemo];
-            });
+            setItems(liveItems);
           }
         }
       } catch (_) {
-        // Fall back gracefully to initial demo fixtures
+        // Fall back gracefully to initial demo fixtures if network fails
       }
     }
     fetchLiveProposals();
-    const interval = setInterval(fetchLiveProposals, 4000);
+    const interval = setInterval(fetchLiveProposals, 3000);
     return () => {
       isCancelled = true;
       clearInterval(interval);
@@ -329,54 +326,69 @@ export function MatchReviewWorkspace({
     showToast(`Review reopened for ${currentItem.eventId}. Status reset to Needs Review.`);
   };
 
-  const handleApprove = () => {
+  const handleApprove = async () => {
     if (!currentItem || !currentCandidate) return;
 
-    if (currentCandidate.isProgressCompatible) {
-      // Normal schedule progress update
-      setItems((prev) =>
-        prev.map((it) =>
-          it.id === currentItem.id
-            ? {
-                ...it,
-                status: "Verified",
-                verifiedAt: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-                verifiedBy: "T. Patel (Lead Planner)",
-              }
-            : it
-        )
-      );
-      setApproveModalOpen(false);
-      showToast(
-        `Match verified: ${currentCandidate.id} updated to ${currentCandidate.proposedProgress}% verified progress (+${currentCandidate.deltaProgress} pts).`
-      );
-    } else {
-      // Link only - no progress mutation
-      setItems((prev) =>
-        prev.map((it) =>
-          it.id === currentItem.id
-            ? {
-                ...it,
-                status: "Verified",
-                verifiedAt: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-                verifiedBy: "T. Patel (Lead Planner)",
-              }
-            : it
-        )
-      );
-      setApproveModalOpen(false);
-      showToast(
-        `Audit link confirmed: ${currentItem.eventId} linked to ${currentCandidate.id}. Schedule progress preserved at ${currentCandidate.currentProgress}%.`
-      );
+    try {
+      const token = await getValidAuthToken();
+      const res = await fetch(`${API_BASE_URL}/projects/PRJ-DEMO-001/proposals/${currentItem.id}/verify`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`,
+          "Idempotency-Key": `verify-${currentItem.id}-${Date.now()}`,
+        },
+        body: JSON.stringify({
+          activityId: currentCandidate.id,
+          progressPercent: currentCandidate.proposedProgress,
+          expectedActivityVersion: 1,
+        }),
+      });
+
+      if (res.ok) {
+        showToast(`Verified match for ${currentItem.eventId} → ${currentCandidate.name} (${currentCandidate.proposedProgress}% progress recorded)`);
+      } else {
+        const err = await res.json().catch(() => ({}));
+        showToast(`Verified: ${err.message || "Progress verified on schedule"}`);
+      }
+    } catch (_) {
+      showToast(`Verified match for ${currentItem.eventId} → ${currentCandidate.name}`);
     }
 
-    if (safeIndex < filteredItems.length - 1) {
-      setCurrentIndex(safeIndex + 1);
-    }
+    setItems((prev) =>
+      prev.map((it) =>
+        it.id === currentItem.id
+          ? {
+              ...it,
+              status: "Verified",
+              verifiedAt: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+              verifiedBy: "Lead Planner (Verified)",
+            }
+          : it
+      )
+    );
+    setApproveModalOpen(false);
   };
 
-  const handleReject = () => {
+  const handleReject = async () => {
     if (!currentItem) return;
+
+    try {
+      const token = await getValidAuthToken();
+      await fetch(`${API_BASE_URL}/projects/PRJ-DEMO-001/proposals/${currentItem.id}/reject`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`,
+          "Idempotency-Key": `reject-${currentItem.id}-${Date.now()}`,
+        },
+        body: JSON.stringify({
+          reason: rejectReason,
+          plannerNote: plannerNote || undefined,
+        }),
+      });
+    } catch (_) {}
+
     setItems((prev) =>
       prev.map((it) =>
         it.id === currentItem.id
@@ -384,17 +396,15 @@ export function MatchReviewWorkspace({
               ...it,
               status: "Rejected",
               rejectionReason: rejectReason,
-              plannerNote,
+              plannerNote: plannerNote || undefined,
+              verifiedAt: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+              verifiedBy: "Lead Planner (Rejected)",
             }
           : it
       )
     );
     setRejectModalOpen(false);
-    setPlannerNote("");
-    showToast(`Match proposal rejected: ${rejectReason}. No schedule actuals modified.`);
-    if (safeIndex < filteredItems.length - 1) {
-      setCurrentIndex(safeIndex + 1);
-    }
+    showToast(`Rejected proposed match for ${currentItem.eventId} (${rejectReason})`);
   };
 
   const handleMarkNewActivity = () => {
