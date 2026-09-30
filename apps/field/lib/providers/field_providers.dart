@@ -17,7 +17,7 @@ import '../services/time_agent_extractor.dart';
 // Service providers
 final apiClientProvider = Provider<ApiClient>((ref) => ApiClient());
 
-final offlineSyncServiceProvider = Provider<OfflineSyncService>((ref) {
+final offlineSyncServiceProvider = ChangeNotifierProvider<OfflineSyncService>((ref) {
   final api = ref.watch(apiClientProvider);
   return OfflineSyncService(apiClient: api);
 });
@@ -31,37 +31,40 @@ final offlineModeProvider = ChangeNotifierProvider<OfflineModeNotifier>((ref) {
 class OfflineModeNotifier extends ChangeNotifier {
   final OfflineSyncService _syncService;
   StreamSubscription<List<ConnectivityResult>>? _subscription;
-  bool _simulatedOffline = false;
-  bool _networkOffline = false;
+  bool _disposed = false;
 
   OfflineModeNotifier(this._syncService) {
+    _syncService.addListener(notifyListeners);
     if (!kIsWeb && (Platform.isAndroid || Platform.isIOS)) {
       _subscription = Connectivity().onConnectivityChanged.listen((results) {
-        final wasOffline = isOffline;
-        _networkOffline = results.contains(ConnectivityResult.none);
-        _applyState();
-        if (wasOffline && !isOffline) {
-          _syncService.syncPending().then((_) => notifyListeners());
-        }
+        final hasConnection = !results.contains(ConnectivityResult.none);
+        _syncService.setNetworkAvailable(hasConnection);
       });
     }
   }
 
-  bool get isOffline => _syncService.simulateOffline;
+  bool get isOffline => _syncService.isOffline;
+  bool get isSimulatedOffline => _syncService.simulateOffline;
+  FieldConnectionState get connectionState => _syncService.connectionState;
+  FieldSyncState get syncState => _syncService.syncState;
+  DateTime? get lastSuccessfulSync => _syncService.lastSuccessfulSync;
 
   void setOffline(bool value) {
-    _simulatedOffline = value;
-    _applyState();
+    _syncService.setSimulatedOffline(value);
   }
 
-  void _applyState() {
-    _syncService.simulateOffline = _simulatedOffline || _networkOffline;
-    notifyListeners();
+  @override
+  void notifyListeners() {
+    if (!_disposed) {
+      super.notifyListeners();
+    }
   }
 
   @override
   void dispose() {
+    _disposed = true;
     _subscription?.cancel();
+    _syncService.removeListener(notifyListeners);
     super.dispose();
   }
 }
@@ -77,6 +80,7 @@ class ActivitiesNotifier extends ChangeNotifier {
   bool isLoading = true;
   List<ScheduleActivity> activities = [];
   String? error;
+  bool _disposed = false;
 
   ActivitiesNotifier(this._api);
 
@@ -94,6 +98,19 @@ class ActivitiesNotifier extends ChangeNotifier {
       notifyListeners();
     }
   }
+
+  @override
+  void notifyListeners() {
+    if (!_disposed) {
+      super.notifyListeners();
+    }
+  }
+
+  @override
+  void dispose() {
+    _disposed = true;
+    super.dispose();
+  }
 }
 
 // Events & Sync Queue state
@@ -104,35 +121,53 @@ final eventsProvider = ChangeNotifierProvider<EventsNotifier>((ref) {
 
 class EventsNotifier extends ChangeNotifier {
   final OfflineSyncService _syncService;
+  bool _disposed = false;
 
-  EventsNotifier(this._syncService);
+  EventsNotifier(this._syncService) {
+    _syncService.addListener(notifyListeners);
+  }
 
   Future<void> initialize() async {
     await _syncService.initialize();
-    notifyListeners();
   }
 
   List<ExecutionEvent> get events => _syncService.allEvents;
+  int get pendingCount => _syncService.pendingCount;
+  bool get isOffline => _syncService.isOffline;
+  bool get isSimulatedOffline => _syncService.simulateOffline;
+  FieldConnectionState get connectionState => _syncService.connectionState;
+  FieldSyncState get syncState => _syncService.syncState;
+  DateTime? get lastSuccessfulSync => _syncService.lastSuccessfulSync;
+  bool get isSyncing => _syncService.isSyncing;
 
   void toggleOffline(bool value) {
-    _syncService.simulateOffline = value;
-    notifyListeners();
+    _syncService.setSimulatedOffline(value);
   }
 
   Future<ExecutionEvent> submitEvent(ExecutionEvent event) async {
-    final result = await _syncService.submitEvent(event);
-    notifyListeners();
-    return result;
+    return _syncService.submitEvent(event);
   }
 
   Future<int> syncAllPending() async {
-    final count = await _syncService.syncPending();
-    notifyListeners();
-    return count;
+    return _syncService.syncPending();
   }
 
   MatchProposal? getProposalForEvent(String eventId) {
     return _syncService.proposals[eventId];
+  }
+
+  @override
+  void notifyListeners() {
+    if (!_disposed) {
+      super.notifyListeners();
+    }
+  }
+
+  @override
+  void dispose() {
+    _disposed = true;
+    _syncService.removeListener(notifyListeners);
+    super.dispose();
   }
 }
 

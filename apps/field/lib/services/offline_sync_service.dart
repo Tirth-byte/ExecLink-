@@ -1,3 +1,5 @@
+import 'dart:async';
+import 'package:flutter/foundation.dart';
 import 'package:uuid/uuid.dart';
 
 import '../models/common_types.dart';
@@ -7,14 +9,37 @@ import 'api_client.dart';
 import 'demo_fixtures.dart';
 import 'sqlite_queue_service.dart';
 
-class OfflineSyncService {
+enum FieldConnectionState { online, offline, checking, reconnecting }
+
+enum FieldSyncState { idle, pending, syncing, failed }
+
+class OfflineSyncService with ChangeNotifier {
   final ApiClient apiClient;
   final SqliteFieldQueue sqliteQueue = SqliteFieldQueue();
   final _uuid = const Uuid();
 
   bool simulateOffline = false;
+  bool isNetworkAvailable = true;
+  bool isSyncing = false;
+  DateTime? lastSuccessfulSync = DateTime.now();
+  String? lastSyncError;
+
   final List<ExecutionEvent> _events = [];
   final Map<String, MatchProposal> _proposals = {};
+  bool _disposed = false;
+
+  @override
+  void notifyListeners() {
+    if (!_disposed) {
+      super.notifyListeners();
+    }
+  }
+
+  @override
+  void dispose() {
+    _disposed = true;
+    super.dispose();
+  }
 
   OfflineSyncService({required this.apiClient}) {
     // Seed initial demo events and populate SQLite queue
@@ -40,14 +65,67 @@ class OfflineSyncService {
       }
     }
     _events.sort((a, b) => b.receivedAt.compareTo(a.receivedAt));
+    notifyListeners();
   }
 
   List<ExecutionEvent> get allEvents => List.unmodifiable(_events);
   Map<String, MatchProposal> get proposals => Map.unmodifiable(_proposals);
 
-  int get pendingCount =>
-      _events.where((e) => e.syncStatus == SyncStatus.pending).length;
+  int get pendingCount => _events
+      .where(
+        (e) =>
+            e.syncStatus == SyncStatus.pending ||
+            e.syncStatus == SyncStatus.failed,
+      )
+      .length;
+
   bool get hasPending => pendingCount > 0;
+  bool get isOffline => simulateOffline || !isNetworkAvailable;
+
+  FieldConnectionState get connectionState {
+    if (simulateOffline || !isNetworkAvailable) {
+      return FieldConnectionState.offline;
+    }
+    if (isSyncing) {
+      return FieldConnectionState.reconnecting;
+    }
+    return FieldConnectionState.online;
+  }
+
+  FieldSyncState get syncState {
+    if (isSyncing) {
+      return FieldSyncState.syncing;
+    }
+    if (lastSyncError != null ||
+        _events.any((e) => e.syncStatus == SyncStatus.failed)) {
+      return FieldSyncState.failed;
+    }
+    if (pendingCount > 0) {
+      return FieldSyncState.pending;
+    }
+    return FieldSyncState.idle;
+  }
+
+  void setSimulatedOffline(bool value) {
+    if (simulateOffline == value) return;
+    simulateOffline = value;
+    notifyListeners();
+
+    if (!value) {
+      // Trigger background sync flush when leaving offline simulation
+      unawaited(syncPending());
+    }
+  }
+
+  void setNetworkAvailable(bool available) {
+    if (isNetworkAvailable == available) return;
+    isNetworkAvailable = available;
+    notifyListeners();
+
+    if (available && !simulateOffline) {
+      syncPending();
+    }
+  }
 
   String generateClientEventId() {
     return 'EVT-FIELD-${DateTime.now().millisecondsSinceEpoch}-${_uuid.v4().substring(0, 8)}';
@@ -101,13 +179,14 @@ class OfflineSyncService {
         ? newEvent.copyWith(clientEventId: generateClientEventId())
         : newEvent;
 
-    if (simulateOffline) {
+    if (simulateOffline || !isNetworkAvailable) {
       // Retain as pending in resilient SQLite queue with local evidence
       final pendingEvent = eventWithClientId.copyWith(
         syncStatus: SyncStatus.pending,
       );
       sqliteQueue.enqueue(pendingEvent);
       _events.insert(0, pendingEvent);
+      notifyListeners();
       return pendingEvent;
     }
 
@@ -139,6 +218,9 @@ class OfflineSyncService {
         _proposals[syncedEvent.id] = prop;
       }
 
+      lastSuccessfulSync = DateTime.now();
+      lastSyncError = null;
+      notifyListeners();
       return syncedEvent;
     } catch (e) {
       // Mark as pending retry in SQLite queue on network failure
@@ -149,55 +231,74 @@ class OfflineSyncService {
       sqliteQueue.enqueue(pendingEvent);
       sqliteQueue.markFailed(pendingEvent.clientEventId, e.toString());
       _events.insert(0, pendingEvent);
+      lastSyncError = e.toString();
+      notifyListeners();
       return pendingEvent;
     }
   }
 
-  /// Sync all pending events from queue
+  /// Sync all pending events from queue with concurrency mutex
   Future<int> syncPending() async {
     await sqliteQueue.ready;
-    if (simulateOffline) return 0;
+    if (simulateOffline || !isNetworkAvailable || isSyncing) return 0;
+
+    isSyncing = true;
+    lastSyncError = null;
+    notifyListeners();
 
     int syncedCount = 0;
-    for (int i = 0; i < _events.length; i++) {
-      final ev = _events[i];
-      if (ev.syncStatus == SyncStatus.pending ||
-          ev.syncStatus == SyncStatus.failed) {
-        try {
-          _events[i] = ev.copyWith(syncStatus: SyncStatus.syncing);
-          sqliteQueue.markSyncing(ev.clientEventId);
+    try {
+      for (int i = 0; i < _events.length; i++) {
+        final ev = _events[i];
+        if (ev.syncStatus == SyncStatus.pending ||
+            ev.syncStatus == SyncStatus.failed) {
+          try {
+            _events[i] = ev.copyWith(syncStatus: SyncStatus.syncing);
+            sqliteQueue.markSyncing(ev.clientEventId);
+            notifyListeners();
 
-          // Upload attachments first
-          final preparedEvent = await _uploadEventAttachments(
-            ev.projectId,
-            ev,
-          );
-
-          final res = await apiClient.submitEvent(
-            projectId: preparedEvent.projectId,
-            event: preparedEvent,
-          );
-          _events[i] = preparedEvent.copyWith(
-            syncStatus: SyncStatus.synced,
-            syncError: null,
-          );
-          sqliteQueue.markSynced(ev.clientEventId);
-
-          if (res['proposal'] != null) {
-            final prop = MatchProposal.fromJson(
-              res['proposal'] as Map<String, dynamic>,
+            // Upload attachments first
+            final preparedEvent = await _uploadEventAttachments(
+              ev.projectId,
+              ev,
             );
-            _proposals[ev.id] = prop;
+
+            final res = await apiClient.submitEvent(
+              projectId: preparedEvent.projectId,
+              event: preparedEvent,
+            );
+            _events[i] = preparedEvent.copyWith(
+              syncStatus: SyncStatus.synced,
+              syncError: null,
+            );
+            sqliteQueue.markSynced(ev.clientEventId);
+
+            if (res['proposal'] != null) {
+              final prop = MatchProposal.fromJson(
+                res['proposal'] as Map<String, dynamic>,
+              );
+              _proposals[ev.id] = prop;
+            }
+            syncedCount++;
+            notifyListeners();
+          } catch (e) {
+            _events[i] = ev.copyWith(
+              syncStatus: SyncStatus.failed,
+              syncError: e.toString(),
+            );
+            sqliteQueue.markFailed(ev.clientEventId, e.toString());
+            lastSyncError = e.toString();
+            notifyListeners();
           }
-          syncedCount++;
-        } catch (e) {
-          _events[i] = ev.copyWith(
-            syncStatus: SyncStatus.failed,
-            syncError: e.toString(),
-          );
-          sqliteQueue.markFailed(ev.clientEventId, e.toString());
         }
       }
+      if (pendingCount == 0) {
+        lastSuccessfulSync = DateTime.now();
+        lastSyncError = null;
+      }
+    } finally {
+      isSyncing = false;
+      notifyListeners();
     }
     return syncedCount;
   }

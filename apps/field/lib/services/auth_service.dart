@@ -86,12 +86,11 @@ class User {
 }
 
 class AuthService {
-  AuthService({http.Client? client, String baseUrl = ApiConfig.baseUrl})
-    : _client = client ?? http.Client(),
-      _baseUrl = baseUrl;
+  AuthService({http.Client? client, this.baseUrl = ApiConfig.baseUrl})
+    : _client = client ?? http.Client();
 
   final http.Client _client;
-  final String _baseUrl;
+  final String baseUrl;
 
   Future<void> saveToken(String token) async {
     final prefs = await SharedPreferences.getInstance();
@@ -108,15 +107,84 @@ class AuthService {
     await prefs.remove('execlink_token');
   }
 
-  Future<String> login(String email, String password) async {
+  /// Performs an HTTP request with bounded retries for transient failures
+  /// (e.g. SocketException, TimeoutException, 502/503/504 Bad Gateway / Service Unavailable).
+  /// Strictly does NOT retry 400, 401, 403 or client-side validation errors.
+  /// Bounded to MAX 2 attempts to tolerate Render cold start / transient timeout.
+  Future<http.Response> _executeWithRetry({
+    required Future<http.Response> Function() requestFn,
+    int maxAttempts = 2,
+    void Function(String status)? onStatusUpdate,
+  }) async {
+    int attempt = 0;
+    while (true) {
+      attempt++;
+      try {
+        if (attempt > 1) {
+          onStatusUpdate?.call('Connecting to ExecLink (retrying)...');
+        }
+        final response = await requestFn();
+        // Check for transient server startup status codes (502, 503, 504)
+        if ((response.statusCode == 502 ||
+                response.statusCode == 503 ||
+                response.statusCode == 504) &&
+            attempt < maxAttempts) {
+          onStatusUpdate?.call('Connecting to ExecLink...');
+          final backoffMs = 500 * attempt;
+          await Future.delayed(Duration(milliseconds: backoffMs));
+          continue;
+        }
+        return response;
+      } on SocketException catch (error) {
+        if (attempt >= maxAttempts) {
+          throw AuthFailure(
+            AuthFailureCode.backendUnreachable,
+            'Unable to reach ExecLink. Check your network connection.',
+            cause: error,
+          );
+        }
+        onStatusUpdate?.call('Connecting to ExecLink...');
+        await Future.delayed(Duration(milliseconds: 500 * attempt));
+      } on http.ClientException catch (error) {
+        if (attempt >= maxAttempts) {
+          throw AuthFailure(
+            AuthFailureCode.backendUnreachable,
+            'Unable to reach ExecLink. Check your network connection.',
+            cause: error,
+          );
+        }
+        onStatusUpdate?.call('Connecting to ExecLink...');
+        await Future.delayed(Duration(milliseconds: 500 * attempt));
+      } on TimeoutException catch (error) {
+        if (attempt >= maxAttempts) {
+          throw AuthFailure(
+            AuthFailureCode.backendUnreachable,
+            'The request timed out. The server may be waking up, please try again.',
+            cause: error,
+          );
+        }
+        onStatusUpdate?.call('Connecting to ExecLink...');
+        await Future.delayed(Duration(milliseconds: 500 * attempt));
+      }
+    }
+  }
+
+  Future<String> login(
+    String email,
+    String password, {
+    void Function(String status)? onStatusUpdate,
+  }) async {
     try {
-      final response = await _client
-          .post(
-            Uri.parse('$_baseUrl/auth/login'),
-            headers: {'Content-Type': 'application/json'},
-            body: jsonEncode({'email': email, 'password': password}),
-          )
-          .timeout(const Duration(seconds: 10));
+      final response = await _executeWithRetry(
+        onStatusUpdate: onStatusUpdate,
+        requestFn: () => _client
+            .post(
+              Uri.parse('$baseUrl/auth/login'),
+              headers: {'Content-Type': 'application/json'},
+              body: jsonEncode({'email': email.trim(), 'password': password}),
+            )
+            .timeout(ApiConfig.requestTimeout),
+      );
 
       if (response.statusCode == 200) {
         final data = _decodeObject(response.body);
@@ -139,7 +207,7 @@ class AuthService {
       if (response.statusCode >= 500) {
         throw AuthFailure(
           AuthFailureCode.serverError,
-          'ExecLink server returned ${response.statusCode}.',
+          'ExecLink server is temporarily unavailable or starting up. Please try again.',
         );
       }
       throw AuthFailure(
@@ -148,24 +216,6 @@ class AuthService {
       );
     } on AuthFailure {
       rethrow;
-    } on SocketException catch (error) {
-      throw AuthFailure(
-        AuthFailureCode.backendUnreachable,
-        'Unable to reach the ExecLink API.',
-        cause: error,
-      );
-    } on http.ClientException catch (error) {
-      throw AuthFailure(
-        AuthFailureCode.backendUnreachable,
-        'Unable to reach the ExecLink API.',
-        cause: error,
-      );
-    } on TimeoutException catch (error) {
-      throw AuthFailure(
-        AuthFailureCode.backendUnreachable,
-        'The ExecLink API connection timed out.',
-        cause: error,
-      );
     } on FormatException catch (error) {
       throw AuthFailure(
         AuthFailureCode.responseInvalid,
@@ -175,20 +225,30 @@ class AuthService {
     }
   }
 
-  Future<User> fetchMe() async {
+  Future<User> fetchMe({
+    void Function(String status)? onStatusUpdate,
+  }) async {
     final token = await getToken();
-    if (token == null) throw Exception('No token found');
+    if (token == null) {
+      throw const AuthFailure(
+        AuthFailureCode.unauthorized,
+        'No active session token found.',
+      );
+    }
 
     try {
-      final response = await _client
-          .get(
-            Uri.parse('$_baseUrl/auth/me'),
-            headers: {
-              'Content-Type': 'application/json',
-              'Authorization': 'Bearer $token',
-            },
-          )
-          .timeout(const Duration(seconds: 10));
+      final response = await _executeWithRetry(
+        onStatusUpdate: onStatusUpdate,
+        requestFn: () => _client
+            .get(
+              Uri.parse('$baseUrl/auth/me'),
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': 'Bearer $token',
+              },
+            )
+            .timeout(ApiConfig.requestTimeout),
+      );
 
       if (response.statusCode == 200) {
         return User.fromJson(_decodeObject(response.body));
@@ -196,7 +256,7 @@ class AuthService {
       if (response.statusCode == 401 || response.statusCode == 403) {
         throw const AuthFailure(
           AuthFailureCode.unauthorized,
-          'Your ExecLink session is not authorized.',
+          'Your session is no longer authorized. Please sign in again.',
         );
       }
       if (response.statusCode >= 500) {
@@ -211,24 +271,6 @@ class AuthService {
       );
     } on AuthFailure {
       rethrow;
-    } on SocketException catch (error) {
-      throw AuthFailure(
-        AuthFailureCode.backendUnreachable,
-        'Unable to reach the ExecLink API.',
-        cause: error,
-      );
-    } on http.ClientException catch (error) {
-      throw AuthFailure(
-        AuthFailureCode.backendUnreachable,
-        'Unable to reach the ExecLink API.',
-        cause: error,
-      );
-    } on TimeoutException catch (error) {
-      throw AuthFailure(
-        AuthFailureCode.backendUnreachable,
-        'The ExecLink API connection timed out.',
-        cause: error,
-      );
     } on FormatException catch (error) {
       throw AuthFailure(
         AuthFailureCode.responseInvalid,

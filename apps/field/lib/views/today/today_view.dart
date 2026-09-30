@@ -129,35 +129,19 @@ class TodayView extends ConsumerWidget {
               duration: const Duration(milliseconds: 180),
               switchInCurve: Curves.easeOutCubic,
               switchOutCurve: Curves.easeOutCubic,
-              layoutBuilder: (currentChild, previousChildren) {
-                return Stack(
-                  alignment: Alignment.topCenter,
-                  children: <Widget>[
-                    ...previousChildren.map(
-                      (child) =>
-                          Positioned(top: 0, left: 0, right: 0, child: child),
-                    ),
-                    if (currentChild != null) currentChild,
-                  ],
-                );
-              },
               transitionBuilder: (child, animation) {
                 return FadeTransition(
                   opacity: animation,
-                  child: AnimatedBuilder(
-                    animation: animation,
-                    builder: (context, childWidget) {
-                      final slide = 6.0 * (1.0 - animation.value);
-                      // Reverse slide direction for outgoing items
-                      final isIncoming =
-                          animation.status == AnimationStatus.forward ||
-                          animation.status == AnimationStatus.completed;
-                      final offset = isIncoming ? slide : -slide;
-                      return Transform.translate(
-                        offset: Offset(0.0, offset),
-                        child: childWidget,
-                      );
-                    },
+                  child: SlideTransition(
+                    position: Tween<Offset>(
+                      begin: const Offset(0.0, 0.03),
+                      end: Offset.zero,
+                    ).animate(
+                      CurvedAnimation(
+                        parent: animation,
+                        curve: Curves.easeOutCubic,
+                      ),
+                    ),
                     child: child,
                   ),
                 );
@@ -187,7 +171,7 @@ class TodayView extends ConsumerWidget {
         ),
         SliverToBoxAdapter(
           child: Padding(
-            padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 110),
             child: FieldSecondaryButton(
               text: 'Record unplanned work',
               icon: Icons.add_rounded,

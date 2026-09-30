@@ -47,9 +47,9 @@ class LocalEvidenceStorage(EvidenceStorage):
         self.base_dir.mkdir(parents=True, exist_ok=True)
 
     def _file_path(self, storage_key: str) -> Path:
-        # Prevent directory traversal attacks
-        safe_key = os.path.basename(storage_key)
-        return self.base_dir / safe_key
+        # Sanitize parts to prevent directory traversal
+        parts = [p for p in Path(storage_key).parts if p not in ("..", ".", "/", "\\")]
+        return self.base_dir.joinpath(*parts)
 
     def save(self, storage_key: str, data: bytes, content_type: str) -> str:
         dest = self._file_path(storage_key)
@@ -60,7 +60,12 @@ class LocalEvidenceStorage(EvidenceStorage):
     def read(self, storage_key: str) -> tuple[bytes, str]:
         path = self._file_path(storage_key)
         if not path.exists():
-            raise FileNotFoundError(f"Storage key not found: {storage_key}")
+            # Fallback for flat basename storage
+            flat_path = self.base_dir / os.path.basename(storage_key)
+            if flat_path.exists():
+                path = flat_path
+            else:
+                raise FileNotFoundError(f"Storage key not found: {storage_key}")
         content_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
         return path.read_bytes(), content_type
 
@@ -72,10 +77,14 @@ class LocalEvidenceStorage(EvidenceStorage):
         if path.exists():
             path.unlink()
             return True
+        flat_path = self.base_dir / os.path.basename(storage_key)
+        if flat_path.exists():
+            flat_path.unlink()
+            return True
         return False
 
     def exists(self, storage_key: str) -> bool:
-        return self._file_path(storage_key).exists()
+        return self._file_path(storage_key).exists() or (self.base_dir / os.path.basename(storage_key)).exists()
 
 
 class CloudEvidenceStorage(EvidenceStorage):

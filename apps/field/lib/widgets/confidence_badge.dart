@@ -7,8 +7,14 @@ import '../models/match_proposal.dart';
 class ConfidenceBadge extends StatelessWidget {
   final double score;
   final String band;
+  final bool isCompact;
 
-  const ConfidenceBadge({super.key, required this.score, required this.band});
+  const ConfidenceBadge({
+    super.key,
+    required this.score,
+    required this.band,
+    this.isCompact = false,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -25,24 +31,27 @@ class ConfidenceBadge extends StatelessWidget {
       bg = FieldColors.confidenceHighBg;
       fg = FieldColors.confidenceHigh;
       borderColor = FieldColors.confidenceHighBorder;
-      label = '$pct% match confidence';
+      label = isCompact ? '$pct% match' : '$pct% match confidence';
       icon = Icons.auto_awesome_rounded;
     } else if (band == 'review' || score >= 0.70) {
       bg = FieldColors.confidenceReviewBg;
       fg = FieldColors.confidenceReview;
       borderColor = FieldColors.confidenceReviewBorder;
-      label = '$pct% review confidence';
+      label = isCompact ? '$pct% review' : '$pct% review confidence';
       icon = Icons.visibility_outlined;
     } else {
       bg = FieldColors.confidenceUnmatchedBg;
       fg = FieldColors.confidenceUnmatched;
       borderColor = FieldColors.confidenceUnmatchedBorder;
-      label = 'Unmatched · $pct%';
+      label = isCompact ? 'Unmatched' : 'Unmatched · $pct%';
       icon = Icons.help_outline_rounded;
     }
 
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2.5),
+      padding: EdgeInsets.symmetric(
+        horizontal: isCompact ? 6 : 7,
+        vertical: isCompact ? 2 : 2.5,
+      ),
       decoration: BoxDecoration(
         color: bg,
         borderRadius: BorderRadius.circular(999),
@@ -51,7 +60,7 @@ class ConfidenceBadge extends StatelessWidget {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(icon, size: 12, color: fg),
+          Icon(icon, size: isCompact ? 11 : 12, color: fg),
           const SizedBox(width: 4),
           Flexible(
             child: Text(
@@ -59,7 +68,7 @@ class ConfidenceBadge extends StatelessWidget {
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: FieldTypography.monoSm.copyWith(
-                fontSize: 10,
+                fontSize: isCompact ? 9.5 : 10,
                 fontWeight: FontWeight.w600,
                 color: fg,
                 letterSpacing: 0.1,
@@ -106,25 +115,30 @@ class SignalBreakdownWidget extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 SizedBox(
-                  width: 90,
+                  width: 82,
                   child: Text(
                     sig.signal.toUpperCase(),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                     style: FieldTypography.monoSm.copyWith(
-                      fontSize: 10.5,
+                      fontSize: 10,
                       fontWeight: FontWeight.w600,
                       color: color,
                     ),
                   ),
                 ),
+                const SizedBox(width: 6),
                 Expanded(
                   child: Text(
                     sig.explanation,
                     style: FieldTypography.bodySm.copyWith(
+                      fontSize: 12,
                       color: FieldColors.text,
+                      height: 1.3,
                     ),
                   ),
                 ),
-                const SizedBox(width: 8),
+                const SizedBox(width: 6),
                 Text(
                   '+${(sig.contribution * 100).toStringAsFixed(1)}%',
                   style: FieldTypography.monoSm.copyWith(

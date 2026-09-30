@@ -14,7 +14,7 @@ class CaptureHubView extends StatelessWidget {
   @override
   Widget build(BuildContext context) => ListView(
     key: const PageStorageKey('capture-scroll'),
-    padding: const EdgeInsets.only(bottom: 24),
+    padding: const EdgeInsets.only(bottom: 110),
     children: [
       const FieldPageHeader(
         title: 'Field Capture',

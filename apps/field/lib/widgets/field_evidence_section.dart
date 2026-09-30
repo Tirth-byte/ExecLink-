@@ -132,24 +132,31 @@ class _FieldEvidenceSectionState extends State<FieldEvidenceSection> {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Row(
-                children: [
-                  const Icon(
-                    Icons.camera_alt_outlined,
-                    size: 16,
-                    color: FieldColors.action,
-                  ),
-                  const SizedBox(width: 6),
-                  Text(
-                    'FIELD EVIDENCE',
-                    style: AppTypography.bodySmBold.copyWith(
-                      fontSize: 11,
-                      letterSpacing: 0.5,
-                      color: AppColors.textMuted,
+              Flexible(
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(
+                      Icons.camera_alt_outlined,
+                      size: 16,
+                      color: FieldColors.action,
                     ),
-                  ),
-                ],
+                    const SizedBox(width: 6),
+                    Flexible(
+                      child: Text(
+                        'FIELD EVIDENCE',
+                        style: AppTypography.bodySmBold.copyWith(
+                          fontSize: 11,
+                          letterSpacing: 0.5,
+                          color: AppColors.textMuted,
+                        ),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  ],
+                ),
               ),
+              const SizedBox(width: 8),
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
                 decoration: BoxDecoration(

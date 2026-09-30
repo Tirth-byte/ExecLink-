@@ -95,12 +95,15 @@ class StatusBadge extends StatelessWidget {
         children: [
           Icon(icon, size: isDense ? 10.5 : 12, color: fg),
           const SizedBox(width: 4),
-          Text(
-            label,
-            style: FieldTypography.statusText.copyWith(
-              fontSize: isDense ? 9.5 : 11,
-              color: fg,
-              letterSpacing: 0.3,
+          Flexible(
+            child: Text(
+              label,
+              style: FieldTypography.statusText.copyWith(
+                fontSize: isDense ? 9.5 : 11,
+                color: fg,
+                letterSpacing: 0.3,
+              ),
+              overflow: TextOverflow.ellipsis,
             ),
           ),
         ],

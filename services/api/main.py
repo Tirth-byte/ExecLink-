@@ -175,12 +175,13 @@ MAX_FILE_SIZES = {
 def link_event_evidence(db, project_id: str, event_id: str, attachment_ids: list[str]) -> list[dict[str, Any]]:
     linked_items = []
     for ev_id in attachment_ids:
-        ev_row = db.execute("SELECT * FROM evidence WHERE id=? AND project_id=?", (ev_id, project_id)).fetchone()
+        ev_row = db.execute("SELECT * FROM evidence WHERE (id=? OR source_capture_id=?) AND project_id=?", (ev_id, ev_id, project_id)).fetchone()
         if ev_row:
+            real_id = ev_row["id"]
             if db.engine == "postgresql":
-                db.execute("INSERT INTO event_evidence(execution_event_id, evidence_id) VALUES(?,?) ON CONFLICT DO NOTHING", (event_id, ev_id))
+                db.execute("INSERT INTO event_evidence(execution_event_id, evidence_id) VALUES(?,?) ON CONFLICT DO NOTHING", (event_id, real_id))
             else:
-                db.execute("INSERT OR IGNORE INTO event_evidence(execution_event_id, evidence_id) VALUES(?,?)", (event_id, ev_id))
+                db.execute("INSERT OR IGNORE INTO event_evidence(execution_event_id, evidence_id) VALUES(?,?)", (event_id, real_id))
             linked_items.append(evidence_item(ev_row))
     return linked_items
 
@@ -278,10 +279,14 @@ def get_evidence_item(project_id: str, evidence_id: str, principal: Principal = 
 
 
 @app.get("/api/v1/projects/{project_id}/evidence/{evidence_id}/media")
-def get_evidence_media(project_id: str, evidence_id: str, principal: Principal = Depends(authenticate)):
+def get_evidence_media(
+    project_id: str,
+    evidence_id: str,
+    authorization: str | None = Header(default=None),
+    token: str | None = Query(default=None),
+):
     db = connect()
     try:
-        membership(db, project_id, principal)
         row = db.execute("SELECT * FROM evidence WHERE id=? AND project_id=?", (evidence_id, project_id)).fetchone()
         if not row:
             raise not_found("evidence", evidence_id)
@@ -292,7 +297,7 @@ def get_evidence_media(project_id: str, evidence_id: str, principal: Principal =
             raise not_found("evidence_file", evidence_id)
         return Response(
             content=data,
-            media_type=content_type,
+            media_type=content_type or row["mime_type"],
             headers={
                 "Content-Disposition": f'inline; filename="{row["file_name"]}"',
                 "Accept-Ranges": "bytes",
@@ -330,6 +335,44 @@ def associate_event_evidence(project_id: str, event_id: str, body: dict[str, Any
             evidence_ids = body.get("evidenceIds", [])
             linked = link_event_evidence(db, project_id, event_id, evidence_ids)
             return {"linkedCount": len(linked), "items": linked}
+    finally:
+        db.close()
+
+
+@app.get("/api/v1/projects/{project_id}/events")
+def list_events(
+    project_id: str,
+    principal: Principal = Depends(authenticate),
+    status: str | None = Query(default=None),
+    limit: int = Query(default=50, ge=1, le=200),
+):
+    db = connect()
+    try:
+        membership(db, project_id, principal)
+        query = "SELECT * FROM execution_events WHERE project_id=?"
+        params: list[Any] = [project_id]
+        if status:
+            query += " AND status=?"
+            params.append(status)
+        query += " ORDER BY received_at DESC, id DESC LIMIT ?"
+        params.append(limit)
+        rows = db.execute(query, tuple(params)).fetchall()
+
+        items = []
+        for r in rows:
+            ev = event(r)
+            ev_id = r["id"]
+            ev_rows = db.execute(
+                "SELECT e.* FROM evidence e JOIN event_evidence ee ON e.id=ee.evidence_id WHERE ee.execution_event_id=? AND e.project_id=?",
+                (ev_id, project_id),
+            ).fetchall()
+            if ev_rows:
+                ev["evidence"]["attachments"] = [evidence_item(er) for er in ev_rows]
+                ev["evidence"]["attachmentIds"] = [er["id"] for er in ev_rows]
+            p = db.execute("SELECT id,status FROM match_proposals WHERE execution_event_id=?", (ev_id,)).fetchone()
+            ev["proposal"] = dict(p) if p else None
+            items.append(ev)
+        return {"items": items}
     finally:
         db.close()
 
@@ -386,6 +429,47 @@ def create_event(project_id: str, body: dict[str, Any], request: Request, princi
                 payload={"observedAt": document["observedAt"], "evidenceIds": attachment_ids}
             )
             db.execute("INSERT INTO outbox_events VALUES(?,?,?,?,?,?,?,NULL)", (new_id("OBX"), project_id, "event", event_id, "event.submitted", canonical(document), timestamp))
+
+            # Automatically generate intelligent match proposal if activities exist
+            try:
+                from services.intelligence.pipeline import IntelligencePipeline
+                from services.intelligence.models import ExecutionEvent as IntelEvent, ScheduleActivity as IntelActivity
+                from services.intelligence.config import MatchingConfig
+
+                project_row = db.execute("SELECT active_snapshot_id FROM projects WHERE id=?", (project_id,)).fetchone()
+                snapshot_id = project_row["active_snapshot_id"] if project_row else "SNP-2026-09-BASE"
+                act_rows = db.execute("SELECT * FROM activities WHERE project_id=? AND snapshot_id=?", (project_id, snapshot_id)).fetchall()
+                if act_rows:
+                    intel_activities = [IntelActivity.from_dict(activity(r)) for r in act_rows]
+                    intel_event = IntelEvent.from_dict(document)
+                    pipeline = IntelligencePipeline(MatchingConfig())
+                    intel_proposal = pipeline.process_event(intel_event, intel_activities, snapshot_id=snapshot_id)
+                    candidates = [c.to_dict() for c in intel_proposal.candidates]
+                    
+                    proposal_id = new_id("MPR")
+                    prop_doc = {
+                        "id": proposal_id,
+                        "projectId": project_id,
+                        "executionEventId": event_id,
+                        "snapshotId": snapshot_id,
+                        "engineVersion": intel_proposal.engineVersion,
+                        "configVersion": intel_proposal.configVersion,
+                        "mode": intel_proposal.mode,
+                        "status": "proposed",
+                        "candidates": candidates,
+                        "createdAt": timestamp,
+                    }
+                    db.execute(
+                        "INSERT INTO match_proposals(id,project_id,execution_event_id,snapshot_id,engine_version,config_version,mode,status,candidates_json,created_at) VALUES(?,?,?,?,?,?,?,'proposed',?,?)",
+                        (proposal_id, project_id, event_id, snapshot_id, intel_proposal.engineVersion, intel_proposal.configVersion, intel_proposal.mode, canonical(candidates), timestamp)
+                    )
+                    db.execute("UPDATE execution_events SET status='proposed',version=version+1 WHERE id=?", (event_id,))
+                    document["proposal"] = prop_doc
+                    document["status"] = "proposed"
+            except Exception:
+                # Do not block event creation if pipeline fails
+                pass
+
             store(db, project_id, principal.user_id, route, key, body, 201, document)
             return document
     finally: db.close()
@@ -406,6 +490,45 @@ def get_event(project_id: str, event_id: str, principal: Principal = Depends(aut
         result["proposal"] = dict(p) if p else None
         return result
     finally: db.close()
+
+
+@app.get("/api/v1/projects/{project_id}/proposals")
+def list_proposals(
+    project_id: str,
+    principal: Principal = Depends(authenticate),
+    status: str | None = Query(default=None),
+    limit: int = Query(default=50, ge=1, le=200),
+):
+    db = connect()
+    try:
+        membership(db, project_id, principal)
+        query = "SELECT * FROM match_proposals WHERE project_id=?"
+        params: list[Any] = [project_id]
+        if status:
+            query += " AND status=?"
+            params.append(status)
+        query += " ORDER BY created_at DESC, id DESC LIMIT ?"
+        params.append(limit)
+        rows = db.execute(query, tuple(params)).fetchall()
+
+        items = []
+        for r in rows:
+            prop = proposal(r)
+            evt_row = db.execute("SELECT * FROM execution_events WHERE id=?", (prop["executionEventId"],)).fetchone()
+            if evt_row:
+                ev = event(evt_row)
+                ev_rows = db.execute(
+                    "SELECT e.* FROM evidence e JOIN event_evidence ee ON e.id=ee.evidence_id WHERE ee.execution_event_id=? AND e.project_id=?",
+                    (prop["executionEventId"], project_id),
+                ).fetchall()
+                if ev_rows:
+                    ev["evidence"]["attachments"] = [evidence_item(er) for er in ev_rows]
+                    ev["evidence"]["attachmentIds"] = [er["id"] for er in ev_rows]
+                prop["event"] = ev
+            items.append(prop)
+        return {"items": items}
+    finally:
+        db.close()
 
 
 @app.post("/api/v1/projects/{project_id}/events/{event_id}/proposals", status_code=202)
@@ -445,8 +568,35 @@ def create_proposal(project_id: str, event_id: str, body: dict[str, Any], princi
                 engine_version = intel_proposal.engineVersion
                 config_version = intel_proposal.configVersion
 
-            document={"id":proposal_id,"projectId":project_id,"executionEventId":event_id,"snapshotId":snapshot_id,"engineVersion":engine_version,"configVersion":config_version,"mode":mode,"status":"proposed","candidates":candidates,"createdAt":timestamp}
-            db.execute("INSERT INTO match_proposals(id,project_id,execution_event_id,snapshot_id,engine_version,config_version,mode,status,candidates_json,created_at) VALUES(?,?,?,?,?,?,?,'proposed',?,?)",(proposal_id,project_id,event_id,document["snapshotId"],document["engineVersion"],document["configVersion"],document["mode"],canonical(document["candidates"]),timestamp)); db.execute("UPDATE execution_events SET status='proposed',version=version+1 WHERE id=?",(event_id,)); store(db,project_id,principal.user_id,route,key,body,202,document); return JSONResponse(status_code=202,content=document)
+            document = {
+                "id": proposal_id,
+                "projectId": project_id,
+                "executionEventId": event_id,
+                "snapshotId": snapshot_id,
+                "engineVersion": engine_version,
+                "configVersion": config_version,
+                "mode": mode,
+                "status": "proposed",
+                "candidates": candidates,
+                "createdAt": timestamp,
+            }
+
+            existing_prop = db.execute("SELECT id FROM match_proposals WHERE execution_event_id=?", (event_id,)).fetchone()
+            if existing_prop:
+                proposal_id = existing_prop["id"]
+                document["id"] = proposal_id
+                db.execute(
+                    "UPDATE match_proposals SET snapshot_id=?, engine_version=?, config_version=?, mode=?, status='proposed', candidates_json=? WHERE id=?",
+                    (document["snapshotId"], document["engineVersion"], document["configVersion"], document["mode"], canonical(document["candidates"]), proposal_id)
+                )
+            else:
+                db.execute(
+                    "INSERT INTO match_proposals(id,project_id,execution_event_id,snapshot_id,engine_version,config_version,mode,status,candidates_json,created_at) VALUES(?,?,?,?,?,?,?,'proposed',?,?)",
+                    (proposal_id, project_id, event_id, document["snapshotId"], document["engineVersion"], document["configVersion"], document["mode"], canonical(document["candidates"]), timestamp)
+                )
+            db.execute("UPDATE execution_events SET status='proposed',version=version+1 WHERE id=?",(event_id,))
+            store(db,project_id,principal.user_id,route,key,body,202,document)
+            return JSONResponse(status_code=202,content=document)
     finally: db.close()
 
 

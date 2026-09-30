@@ -23,17 +23,17 @@ final appRouterProvider = Provider<GoRouter>((ref) {
     navigatorKey: _rootNavigatorKey,
     initialLocation: '/',
     redirect: (context, state) {
+      if (authState.isInitializing) {
+        return null;
+      }
       final isGoingToLogin = state.uri.path == '/login';
 
       if (authState.token == null && !isGoingToLogin) {
-        print('[ExecLink Router] destination: /login');
         return '/login';
       }
       if (authState.token != null && isGoingToLogin) {
-        print('[ExecLink Router] destination: /');
         return '/';
       }
-      print('[ExecLink Router] destination: (no redirect)');
       return null;
     },
     routes: [

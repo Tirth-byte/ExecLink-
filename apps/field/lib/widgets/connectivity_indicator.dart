@@ -6,6 +6,7 @@ import '../core/theme/app_colors.dart';
 import '../core/theme/app_typography.dart';
 import '../models/execution_event.dart';
 import '../providers/field_providers.dart';
+import '../services/offline_sync_service.dart';
 
 enum ConnectivityStatus { synced, syncing, offline, pending }
 
@@ -23,242 +24,17 @@ class ConnectivityIndicator extends ConsumerWidget {
 
   void _showSyncQueueSheet(BuildContext context, WidgetRef ref) {
     HapticFeedback.lightImpact();
-    final offlineNotifier = ref.read(offlineModeProvider);
-    final eventsNotifier = ref.read(eventsProvider);
-    final isOffline = offlineNotifier.isOffline;
-    final events = eventsNotifier.events;
-    final pendingEvents = events
-        .where(
-          (e) =>
-              e.syncStatus == SyncStatus.pending ||
-              e.syncStatus == SyncStatus.failed,
-        )
-        .toList();
-
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (ctx) => Container(
-        constraints: BoxConstraints(
-          maxHeight: MediaQuery.sizeOf(ctx).height * 0.75,
-        ),
-        decoration: const BoxDecoration(
-          color: AppColors.surface,
-          borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
-        ),
-        child: SafeArea(
-          top: false,
-          child: SingleChildScrollView(
-            physics: const ClampingScrollPhysics(),
-            padding: const EdgeInsets.fromLTRB(18, 10, 18, 20),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Center(
-                  child: Container(
-                    width: 36,
-                    height: 4,
-                    margin: const EdgeInsets.only(bottom: 14),
-                    decoration: BoxDecoration(
-                      color: AppColors.border,
-                      borderRadius: BorderRadius.circular(2),
-                    ),
-                  ),
-                ),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    const Text(
-                      'Field Sync Queue',
-                      style: AppTypography.cardTitle,
-                    ),
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 8,
-                        vertical: 3,
-                      ),
-                      decoration: BoxDecoration(
-                        color: isOffline
-                            ? AppColors.warningBg
-                            : AppColors.successBg,
-                        borderRadius: BorderRadius.circular(4),
-                        border: Border.all(
-                          color:
-                              (isOffline
-                                      ? AppColors.warning
-                                      : AppColors.success)
-                                  .withValues(alpha: 0.3),
-                        ),
-                      ),
-                      child: Text(
-                        isOffline ? 'OFFLINE' : 'CONNECTED',
-                        style: AppTypography.monoSm.copyWith(
-                          fontSize: 10,
-                          fontWeight: FontWeight.bold,
-                          color: isOffline
-                              ? AppColors.warning
-                              : AppColors.success,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 6),
-                Text(
-                  pendingEvents.isEmpty
-                      ? 'All field updates are safely recorded and synced.'
-                      : '${pendingEvents.length} update${pendingEvents.length == 1 ? '' : 's'} stored on device, syncing automatically.',
-                  style: AppTypography.metadata,
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  'Last successful sync: Just now',
-                  style: AppTypography.metadata.copyWith(
-                    fontSize: 11.5,
-                    color: AppColors.textMuted,
-                  ),
-                ),
-                const Divider(height: 24),
-
-                // Offline toggle simulation
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const Text(
-                          'Simulate Offline Mode',
-                          style: AppTypography.bodyBold,
-                        ),
-                        Text(
-                          'Test offline field capture & deferred syncing',
-                          style: AppTypography.metadata.copyWith(
-                            color: AppColors.textMuted,
-                            fontSize: 11.5,
-                          ),
-                        ),
-                      ],
-                    ),
-                    Switch(
-                      value: isOffline,
-                      activeTrackColor: AppColors.warning,
-                      onChanged: (val) {
-                        HapticFeedback.selectionClick();
-                        ref.read(offlineModeProvider).setOffline(val);
-                        ref.read(eventsProvider).toggleOffline(val);
-                      },
-                    ),
-                  ],
-                ),
-                const Divider(height: 24),
-
-                if (pendingEvents.isEmpty)
-                  const Padding(
-                    padding: EdgeInsets.symmetric(vertical: 24),
-                    child: Center(
-                      child: Column(
-                        children: [
-                          Icon(
-                            Icons.check_circle_outline_rounded,
-                            size: 32,
-                            color: AppColors.success,
-                          ),
-                          SizedBox(height: 8),
-                          Text(
-                            'All field updates synchronized with server',
-                            style: AppTypography.bodyMedium,
-                          ),
-                        ],
-                      ),
-                    ),
-                  )
-                else
-                  ...pendingEvents.map(
-                    (ev) => Container(
-                      margin: const EdgeInsets.only(bottom: 8),
-                      padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(
-                        color: AppColors.surfaceMuted,
-                        borderRadius: BorderRadius.circular(10),
-                        border: Border.all(color: AppColors.border),
-                      ),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                            children: [
-                              Text(
-                                ev.id,
-                                style: AppTypography.monoSm.copyWith(
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
-                              Container(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 6,
-                                  vertical: 2,
-                                ),
-                                decoration: BoxDecoration(
-                                  color: AppColors.warningBg,
-                                  borderRadius: BorderRadius.circular(4),
-                                ),
-                                child: Text(
-                                  'Pending Sync',
-                                  style: AppTypography.metadataMedium.copyWith(
-                                    fontSize: 10.5,
-                                    color: AppColors.warning,
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 4),
-                          Text(
-                            ev.evidence.text,
-                            style: AppTypography.metadata,
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-
-                if (pendingEvents.isNotEmpty && !isOffline) ...[
-                  const SizedBox(height: 16),
-                  ElevatedButton.icon(
-                    onPressed: () async {
-                      HapticFeedback.lightImpact();
-                      await ref.read(eventsProvider).syncAllPending();
-                      if (context.mounted) Navigator.pop(context);
-                    },
-                    icon: const Icon(Icons.sync_rounded, size: 16),
-                    label: const Text('Sync All Pending Now'),
-                  ),
-                ],
-                const SizedBox(height: 12),
-                SizedBox(
-                  width: double.infinity,
-                  height: 44,
-                  child: OutlinedButton(
-                    onPressed: () => Navigator.pop(ctx),
-                    style: OutlinedButton.styleFrom(
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                    ),
-                    child: const Text('Close'),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
+      sheetAnimationStyle: const AnimationStyle(
+        duration: Duration(milliseconds: 240),
+        curve: Curves.easeOutCubic,
+        reverseDuration: Duration(milliseconds: 200),
+        reverseCurve: Curves.easeOutCubic,
       ),
+      builder: (ctx) => const FieldSyncQueueSheet(),
     );
   }
 
@@ -288,6 +64,8 @@ class ConnectivityIndicator extends ConsumerWidget {
       effectiveStatus = overrideStatus!;
     } else if (isOffline) {
       effectiveStatus = ConnectivityStatus.offline;
+    } else if (eventsNotifier.isSyncing) {
+      effectiveStatus = ConnectivityStatus.syncing;
     } else if (pendingCount > 0) {
       effectiveStatus = ConnectivityStatus.pending;
     } else {
@@ -339,7 +117,9 @@ class ConnectivityIndicator extends ConsumerWidget {
         borderRadius: BorderRadius.circular(14),
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
-          child: Container(
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 160),
+            curve: Curves.easeOutCubic,
             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
             decoration: BoxDecoration(
               color: bgColor,
@@ -377,6 +157,403 @@ class ConnectivityIndicator extends ConsumerWidget {
                 ),
               ],
             ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class FieldSyncQueueSheet extends ConsumerStatefulWidget {
+  final VoidCallback? onClose;
+
+  const FieldSyncQueueSheet({super.key, this.onClose});
+
+  @override
+  ConsumerState<FieldSyncQueueSheet> createState() =>
+      _FieldSyncQueueSheetState();
+}
+
+class _FieldSyncQueueSheetState extends ConsumerState<FieldSyncQueueSheet> {
+  String _formatLastSync(DateTime? dt) {
+    if (dt == null) return 'Never';
+    final diff = DateTime.now().difference(dt);
+    if (diff.inSeconds < 45) return 'Just now';
+    if (diff.inMinutes < 60) return '${diff.inMinutes}m ago';
+    if (diff.inHours < 24) return '${diff.inHours}h ago';
+    return '${dt.day}/${dt.month} ${dt.hour}:${dt.minute.toString().padLeft(2, '0')}';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final offlineNotifier = ref.watch(offlineModeProvider);
+    final eventsNotifier = ref.watch(eventsProvider);
+
+    final isOffline = offlineNotifier.isOffline;
+    final isSimulated = offlineNotifier.isSimulatedOffline;
+    final isSyncing = eventsNotifier.isSyncing;
+    final connectionState = eventsNotifier.connectionState;
+    final events = eventsNotifier.events;
+    final pendingEvents = events
+        .where(
+          (e) =>
+              e.syncStatus == SyncStatus.pending ||
+              e.syncStatus == SyncStatus.failed ||
+              e.syncStatus == SyncStatus.syncing,
+        )
+        .toList();
+
+    // Badge styling & semantics
+    final String badgeLabel;
+    final Color badgeBg;
+    final Color badgeFg;
+    final IconData badgeIcon;
+
+    if (isOffline) {
+      badgeLabel = pendingEvents.isNotEmpty
+          ? 'OFFLINE (${pendingEvents.length})'
+          : 'OFFLINE';
+      badgeBg = AppColors.warningBg;
+      badgeFg = AppColors.warning;
+      badgeIcon = Icons.cloud_off_rounded;
+    } else if (isSyncing || connectionState == FieldConnectionState.reconnecting) {
+      badgeLabel = 'SYNCING';
+      badgeBg = AppColors.infoBg;
+      badgeFg = AppColors.info;
+      badgeIcon = Icons.sync_rounded;
+    } else if (pendingEvents.isNotEmpty) {
+      badgeLabel = 'CONNECTED (${pendingEvents.length} PENDING)';
+      badgeBg = AppColors.warningBg;
+      badgeFg = AppColors.warning;
+      badgeIcon = Icons.cloud_queue_rounded;
+    } else {
+      badgeLabel = 'CONNECTED';
+      badgeBg = AppColors.successBg;
+      badgeFg = AppColors.success;
+      badgeIcon = Icons.check_circle_outline_rounded;
+    }
+
+    return Container(
+      constraints: BoxConstraints(
+        maxHeight: MediaQuery.sizeOf(context).height * 0.82,
+      ),
+      decoration: const BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
+      ),
+      child: SafeArea(
+        top: false,
+        child: SingleChildScrollView(
+          physics: const ClampingScrollPhysics(),
+          padding: const EdgeInsets.fromLTRB(18, 12, 18, 20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              // Drag Handle
+              Center(
+                child: Container(
+                  width: 36,
+                  height: 4,
+                  margin: const EdgeInsets.only(bottom: 16),
+                  decoration: BoxDecoration(
+                    color: AppColors.border,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+              ),
+
+              // Title & Status Badge
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Flexible(
+                    child: Text(
+                      'Field Sync Queue',
+                      style: AppTypography.cardTitle.copyWith(
+                        fontSize: 17,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                  AnimatedContainer(
+                    duration: const Duration(milliseconds: 160),
+                    curve: Curves.easeOutCubic,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 4,
+                    ),
+                    decoration: BoxDecoration(
+                      color: badgeBg,
+                      borderRadius: BorderRadius.circular(6),
+                      border: Border.all(
+                        color: badgeFg.withValues(alpha: 0.3),
+                      ),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        if (isSyncing || connectionState == FieldConnectionState.reconnecting)
+                          Padding(
+                            padding: const EdgeInsets.only(right: 5),
+                            child: SizedBox(
+                              width: 10,
+                              height: 10,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 1.5,
+                                color: badgeFg,
+                              ),
+                            ),
+                          )
+                        else
+                          Padding(
+                            padding: const EdgeInsets.only(right: 4),
+                            child: Icon(badgeIcon, size: 12, color: badgeFg),
+                          ),
+                        Text(
+                          badgeLabel,
+                          style: AppTypography.monoSm.copyWith(
+                            fontSize: 10.5,
+                            fontWeight: FontWeight.bold,
+                            color: badgeFg,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+
+              // Dynamic Status Subtitle
+              AnimatedSwitcher(
+                duration: const Duration(milliseconds: 200),
+                switchInCurve: Curves.easeOutCubic,
+                switchOutCurve: Curves.easeOutCubic,
+                child: Align(
+                  key: ValueKey<String>('$isOffline-$isSyncing-${pendingEvents.length}'),
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    isOffline
+                        ? (pendingEvents.isEmpty
+                            ? 'Offline Mode active. Field updates will be queued safely on this device.'
+                            : '${pendingEvents.length} update${pendingEvents.length == 1 ? '' : 's'} waiting to sync once online.')
+                        : isSyncing
+                        ? 'Synchronizing field updates with ExecLink server...'
+                        : pendingEvents.isEmpty
+                        ? 'All field updates are safely recorded and synchronized.'
+                        : '${pendingEvents.length} update${pendingEvents.length == 1 ? '' : 's'} stored on device, syncing automatically.',
+                    style: AppTypography.metadata.copyWith(
+                      fontSize: 12.5,
+                      color: AppColors.textSecondary,
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 4),
+
+              Text(
+                'Last successful sync: ${_formatLastSync(offlineNotifier.lastSuccessfulSync)}',
+                style: AppTypography.metadata.copyWith(
+                  fontSize: 11.5,
+                  color: AppColors.textMuted,
+                ),
+              ),
+              const Divider(height: 24),
+
+              // Offline Toggle Simulation Switch
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Expanded(
+                    child: GestureDetector(
+                      behavior: HitTestBehavior.opaque,
+                      onTap: () {
+                        HapticFeedback.selectionClick();
+                        ref.read(eventsProvider).toggleOffline(!isSimulated);
+                      },
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text(
+                            'Simulate Offline Mode',
+                            style: AppTypography.bodyBold,
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            'Test offline field capture & deferred syncing',
+                            style: AppTypography.metadata.copyWith(
+                              color: AppColors.textMuted,
+                              fontSize: 11.5,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Switch(
+                    value: isSimulated,
+                    activeTrackColor: AppColors.warning,
+                    onChanged: (val) {
+                      HapticFeedback.selectionClick();
+                      ref.read(eventsProvider).toggleOffline(val);
+                    },
+                  ),
+                ],
+              ),
+              const Divider(height: 24),
+
+              // Queue Content
+              if (pendingEvents.isEmpty)
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 20),
+                  child: Center(
+                    child: Column(
+                      children: [
+                        Icon(
+                          isOffline
+                              ? Icons.cloud_queue_rounded
+                              : Icons.check_circle_outline_rounded,
+                          size: 32,
+                          color: isOffline
+                              ? AppColors.warning
+                              : AppColors.success,
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          isOffline
+                              ? 'No updates waiting in offline queue'
+                              : 'All field updates synchronized with server',
+                          style: AppTypography.bodyMedium,
+                          textAlign: TextAlign.center,
+                        ),
+                      ],
+                    ),
+                  ),
+                )
+              else ...[
+                Text(
+                  'QUEUED FOR SYNC (${pendingEvents.length})',
+                  style: AppTypography.metadataMedium.copyWith(
+                    fontSize: 11,
+                    color: AppColors.textMuted,
+                    letterSpacing: 0.5,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                ...pendingEvents.map(
+                  (ev) => Container(
+                    margin: const EdgeInsets.only(bottom: 8),
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: AppColors.surfaceMuted,
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(color: AppColors.border),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Flexible(
+                              child: Text(
+                                ev.id,
+                                style: AppTypography.monoSm.copyWith(
+                                  fontWeight: FontWeight.bold,
+                                ),
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 6,
+                                vertical: 2,
+                              ),
+                              decoration: BoxDecoration(
+                                color: ev.syncStatus == SyncStatus.failed
+                                    ? AppColors.dangerBg
+                                    : ev.syncStatus == SyncStatus.syncing
+                                    ? AppColors.infoBg
+                                    : AppColors.warningBg,
+                                borderRadius: BorderRadius.circular(4),
+                              ),
+                              child: Text(
+                                ev.syncStatus == SyncStatus.failed
+                                    ? 'Failed (Retryable)'
+                                    : ev.syncStatus == SyncStatus.syncing
+                                    ? 'Syncing...'
+                                    : 'Pending Sync',
+                                style: AppTypography.metadataMedium.copyWith(
+                                  fontSize: 10.5,
+                                  color: ev.syncStatus == SyncStatus.failed
+                                      ? AppColors.danger
+                                      : ev.syncStatus == SyncStatus.syncing
+                                      ? AppColors.info
+                                      : AppColors.warning,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          ev.evidence.text,
+                          style: AppTypography.metadata,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+
+              if (pendingEvents.isNotEmpty && !isOffline) ...[
+                const SizedBox(height: 12),
+                SizedBox(
+                  width: double.infinity,
+                  height: 46,
+                  child: ElevatedButton.icon(
+                    onPressed: isSyncing
+                        ? null
+                        : () async {
+                            HapticFeedback.lightImpact();
+                            await ref.read(eventsProvider).syncAllPending();
+                          },
+                    icon: isSyncing
+                        ? const SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: AppColors.surface,
+                            ),
+                          )
+                        : const Icon(Icons.sync_rounded, size: 16),
+                    label: Text(
+                      isSyncing ? 'Syncing...' : 'Sync All Pending Now',
+                    ),
+                  ),
+                ),
+              ],
+              const SizedBox(height: 12),
+              SizedBox(
+                width: double.infinity,
+                height: 44,
+                child: OutlinedButton(
+                  onPressed: widget.onClose ?? () => Navigator.pop(context),
+                  style: OutlinedButton.styleFrom(
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                  ),
+                  child: const Text('Close'),
+                ),
+              ),
+            ],
           ),
         ),
       ),

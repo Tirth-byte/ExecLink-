@@ -31,15 +31,15 @@ class FieldBottomNavigation extends StatelessWidget {
           child: Container(
             height: 72,
             decoration: BoxDecoration(
-              color: FieldColors.surface.withOpacity(0.85),
+              color: FieldColors.surface.withValues(alpha: 0.85),
               borderRadius: BorderRadius.circular(28),
               border: Border.all(
-                color: FieldColors.border.withOpacity(0.6),
+                color: FieldColors.border.withValues(alpha: 0.6),
                 width: 1,
               ),
               boxShadow: [
                 BoxShadow(
-                  color: Colors.black.withOpacity(0.04),
+                  color: Colors.black.withValues(alpha: 0.04),
                   blurRadius: 10,
                   offset: const Offset(0, 4),
                 ),
@@ -66,7 +66,7 @@ class FieldBottomNavigation extends StatelessWidget {
                             color: FieldColors.brand50,
                             borderRadius: BorderRadius.circular(22),
                             border: Border.all(
-                              color: FieldColors.brand100.withOpacity(0.5),
+                              color: FieldColors.brand100.withValues(alpha: 0.5),
                               width: 1,
                             ),
                           ),
